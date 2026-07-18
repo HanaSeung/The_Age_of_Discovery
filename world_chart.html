@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>大航海圖 · World Nautical Chart (Stage 1)</title>
+<style>
+  html,body{margin:0;height:100%;background:#14211f;overflow:hidden;
+    font-family:'Georgia','Times New Roman',serif;color:#e9ddc0;-webkit-font-smoothing:antialiased;}
+  #c{display:block;position:fixed;inset:0;cursor:crosshair;touch-action:none;}
+  .panel{position:fixed;pointer-events:none;user-select:none;text-shadow:0 1px 2px rgba(0,0,0,.6);}
+  #hud{top:14px;left:16px;font-size:13px;line-height:1.5;letter-spacing:.3px;}
+  #hud b{color:#f2e6bf;font-weight:600;}
+  #hud .v{color:#ffd98a;}
+  #hint{bottom:12px;left:16px;font-size:12px;color:#cdbf9a;opacity:.85;max-width:60vw;}
+  #src{bottom:12px;right:16px;font-size:11px;color:#bfae86;opacity:.8;text-align:right;}
+  #info{top:0;left:0;right:0;bottom:0;display:none;align-items:center;justify-content:center;
+    background:rgba(12,20,19,.86);pointer-events:auto;z-index:5;}
+  #info .card{max-width:560px;background:#efe2bf;color:#3a2c17;border:2px solid #7a5a34;
+    border-radius:6px;padding:22px 26px;box-shadow:0 10px 40px rgba(0,0,0,.5);
+    font-size:13.5px;line-height:1.65;}
+  #info h2{margin:.1em 0 .5em;font-size:19px;color:#5a3d1c;letter-spacing:1px;}
+  #info h3{margin:1em 0 .2em;font-size:14px;color:#7a4d1c;}
+  #info code{background:#e0cfa2;padding:1px 5px;border-radius:3px;font-size:12px;}
+  #info .x{margin-top:14px;font-size:12px;color:#6a5230;}
+  kbd{background:#2c3b38;border:1px solid #4a5e59;border-bottom-width:2px;border-radius:4px;
+    padding:0 5px;font-size:11px;color:#ffe9b8;font-family:monospace;}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud" class="panel"></div>
+<div id="hint" class="panel">
+  <kbd>W</kbd>/<kbd>S</kbd> 돛 올림·내림 · <kbd>A</kbd>/<kbd>D</kbd> 좌현·우현 선회 · <kbd>Shift</kbd> 순풍 ·
+  <kbd>휠</kbd>/<kbd>+ -</kbd> 확대·축소 ·
+  <kbd>G</kbd> 경위선 · <kbd>H</kbd> 나침선 · <kbd>C</kbd> 충돌영역 · <kbd>K</kbd> 해류 표시 · <kbd>I</kbd> 정보
+</div>
+<div id="src" class="panel">地圖: Natural Earth 1:50m (Public Domain) · 投影: Equirectangular</div>
+
+<div id="info">
+ <div class="card">
+  <h2>WORLD NAUTICAL CHART — 설계 개요</h2>
+  <h3>① 지도 데이터</h3>
+  Natural Earth <b>1:50m land</b> 해안선 폴리곤(퍼블릭 도메인). 0.08° 단순화 → 931폴리곤.
+  해안선을 임의로 그리지 않고 실측 데이터만 사용.
+  <h3>② 투영법</h3>
+  <b>Equirectangular (Plate Carrée)</b>. 경도→X 선형, 위도→Y 선형.
+  좌우 이음이 자연스러워 <b>수평 순환(wrap)</b>에 최적이고, 중위도 대륙 형태가 과왜곡되지 않음.
+  <h3>③ 지도 크기 · 좌표계</h3>
+  월드 픽셀 <code>8192 × 4096</code> (2:1). 경도 [-180,180]·위도 [-90,90].
+  <code>x=(lon+180)/360·W</code>, <code>y=(90-lat)/180·H</code>. X는 modulo 순환, Y는 극에서 clamp.
+  <h3>④ 충돌 판정</h3>
+  같은 폴리곤을 <code>4096×2048</code> 오프스크린에 evenodd로 래스터화 → <b>육지 마스크</b>.
+  선박 이동 목표점을 마스크에서 샘플, 육지면 차단. 해안을 따라 축 분리 슬라이드.
+  <div class="x">아무 곳이나 눌러 닫기 · <kbd>I</kbd></div>
+ </div>
+</div>
+
+<script src="land_data.js"></script>
+<script src="bathy_data.js"></script>
+<script src="currents_data.js"></script>
+<script>
+"use strict";
+// (지도 데이터는 land_data.js 로 분리됨 - build_land.py)
+
+// ===== 좌표계 / 월드 상수 =====
+const WORLD_W = 8192, WORLD_H = 4096;          // 월드 픽셀 (equirectangular 2:1)
+const MASK_W  = 8192, MASK_H  = 4096;          // 충돌 마스크 (1셀 = 1월드px = 4.9km)
+const DEG2PXX = WORLD_W/360, DEG2PXY = WORLD_H/180;
+function project(lon,lat){ return [ (lon+180)*DEG2PXX, (90-lat)*DEG2PXY ]; }
+function wrapX(x){ return ((x%WORLD_W)+WORLD_W)%WORLD_W; }
+// 항해 가능 위도 한계(극 차단): 약 +84° ~ -80°
+const Y_TOP = (90-84)*DEG2PXY, Y_BOT = (90-(-80))*DEG2PXY;
+
+// ===== 축척 · 시간 압축 (모든 속도의 기준) =====
+const KM_PER_PX = 40075/WORLD_W;                    // 적도에서 월드 1px = 4.892 km
+const DAY_PER_SEC = 1;                              // ★ 게임 1초 = 실제 1일 (여기만 바꾸면 전체 속도 조절)
+const KN_TO_PX = (1.852*24*DAY_PER_SEC)/KM_PER_PX;  // 노트 → 월드px/초  (= 9.086)
+const MS_TO_PX = (3.6 *24*DAY_PER_SEC)/KM_PER_PX;   // m/s  → 월드px/초  (= 17.66)
+const PX_TO_KN = 1/KN_TO_PX;                        // 월드px/초 → 노트 (HUD 표시용)
+
+// ===== 수심 밴드 (Natural Earth 10m 등심선, 누적 구조) =====
+// 각 밴드 = "해당 수심보다 깊은 영역". 따라서 얕은 것부터 덮어 칠한다.
+const BATHY = (function(){
+  const B = window.BATHY;
+  if(!B){ console.warn('bathy_data.js 없음 — 단색 바다로 표시'); return null; }
+  const bin = atob(B.data);
+  const buf = new Uint8Array(bin.length);
+  for(let i=0;i<bin.length;i++) buf[i]=bin.charCodeAt(i);
+  const dv = new DataView(buf.buffer);
+  let off=0;
+  const nB = dv.getUint32(off,true); off+=4;
+  const meta=[];
+  for(let b=0;b<nB;b++){ const d=dv.getUint32(off,true); const n=dv.getUint32(off+4,true); off+=8; meta.push({depth:d,n:n}); }
+  for(const m of meta){ m.lens=new Uint32Array(m.n); for(let r=0;r<m.n;r++){ m.lens[r]=dv.getUint32(off,true); off+=4; } }
+  const S=B.scale;
+  for(const m of meta){
+    const path=new Path2D();
+    for(let r=0;r<m.n;r++){
+      const len=m.lens[r];
+      for(let i=0;i<len;i++){
+        const lon=dv.getInt16(off,true)/S; off+=2;
+        const lat=dv.getInt16(off,true)/S; off+=2;
+        const p=project(lon,lat);
+        if(i===0) path.moveTo(p[0],p[1]); else path.lineTo(p[0],p[1]);
+      }
+      path.closePath();
+    }
+    m.path=path;
+  }
+  console.log('bathy: bands',meta.map(m=>m.depth+'m/'+m.n+'rings').join(' '),'| points',B.points);
+  return meta;
+})();
+
+// ===== 육지 폴리곤 → 단일 Path2D (evenodd) : land_data.js 이진 디코드 =====
+const landPath = new Path2D();
+(function(){
+  const L = window.LANDBIN;
+  if(!L){ console.error('land_data.js 없음 — build_land.py 를 실행하시오'); return; }
+  const bin = atob(L.data);
+  const buf = new Uint8Array(bin.length);
+  for(let i=0;i<bin.length;i++) buf[i]=bin.charCodeAt(i);
+  const dv = new DataView(buf.buffer);
+  let off = 0;
+  const nRings = dv.getUint32(off,true); off += 4;
+  const lens = new Uint32Array(nRings);
+  for(let r=0;r<nRings;r++){ lens[r]=dv.getUint32(off,true); off+=4; }
+  const S = L.scale;
+  for(let r=0;r<nRings;r++){
+    const n = lens[r];
+    for(let i=0;i<n;i++){
+      const lon = dv.getInt16(off,true)/S; off+=2;
+      const lat = dv.getInt16(off,true)/S; off+=2;
+      const p = project(lon,lat);
+      if(i===0) landPath.moveTo(p[0],p[1]); else landPath.lineTo(p[0],p[1]);
+    }
+    landPath.closePath();
+  }
+  console.log('land: rings',nRings,'points',L.points);
+})();
+
+// ===== 충돌 마스크 래스터화 (메모리 절약: 가로 밴드 단위로 판독) =====
+const landMask = new Uint8Array(MASK_W*MASK_H);
+(function(){
+  const BAND = 512;                                   // 한 번에 읽을 행 수
+  const mcv = document.createElement('canvas');
+  mcv.width = MASK_W; mcv.height = BAND;
+  const mctx = mcv.getContext('2d',{willReadFrequently:true});
+  const sx = MASK_W/WORLD_W, sy = MASK_H/WORLD_H;
+  for(let y0=0; y0<MASK_H; y0+=BAND){
+    const h = Math.min(BAND, MASK_H-y0);
+    mctx.setTransform(1,0,0,1,0,0);
+    mctx.clearRect(0,0,MASK_W,BAND);
+    mctx.setTransform(sx,0,0,sy,0,-y0);               // 해당 밴드만 그림
+    mctx.fillStyle='#fff'; mctx.fill(landPath,'evenodd');
+    const px = mctx.getImageData(0,0,MASK_W,h).data;
+    const base = y0*MASK_W;
+    for(let i=0, n=MASK_W*h; i<n; i++) landMask[base+i] = px[i*4] > 127 ? 1 : 0;
+  }
+})();
+function isLand(wx,wy){
+  const mx = (wrapX(wx)*(MASK_W/WORLD_W))|0;
+  let my = (wy*(MASK_H/WORLD_H))|0;
+  if(my<0) my=0; else if(my>=MASK_H) my=MASK_H-1;
+  return landMask[my*MASK_W + (mx>=MASK_W?MASK_W-1:mx)] === 1;
+}
+
+// ===== 해류 필드 (NASA OSCAR 2° u/v 격자) =====
+const CUR = (function(){
+  const C = window.CURRENTS;
+  if(!C){ console.warn('currents_data.js 없음 — 해류 비활성'); return null; }
+  const NXC=C.nx, NYC=C.ny, N=NXC*NYC;
+  const bin = atob(C.data);
+  const q = new Int8Array(N*2);
+  for(let i=0;i<N*2;i++){ const b=bin.charCodeAt(i); q[i] = b>127 ? b-256 : b; }
+  // int8 -> m/s
+  const k = C.quantStep/100;
+  // 실측 유속을 그대로 사용 (인위적 증폭 없음)
+  const CUR_CAP = 55;                       // 안전 상한 ≈ 전속의 75% (실측 최대 43.8px/s < 55, 사실상 무작동)
+  const s = MS_TO_PX;                       // m/s -> 월드px/초
+  function cellU(i,j){ return q[j*NXC+i]*k*s; }
+  function cellV(i,j){ return q[N+j*NXC+i]*k*s; }
+  // 월드좌표 -> 쌍선형보간 (경도 wrap, 위도 clamp, 육지 0)
+  function sample(wx,wy,out){
+    const lon = wrapX(wx)/WORLD_W*360-180;
+    const lat = 90 - wy/WORLD_H*180;
+    let fx = (lon+180)/2 - 0.5, fy = (90-lat)/2 - 0.5;
+    let i0 = Math.floor(fx), j0 = Math.floor(fy);
+    const tx = fx-i0, ty = fy-j0;
+    if(j0<0){ j0=0; } if(j0>NYC-2){ j0=NYC-2; }
+    const i1 = ((i0+1)%NXC+NXC)%NXC; i0 = ((i0%NXC)+NXC)%NXC;
+    const j1 = j0+1;
+    const w00=(1-tx)*(1-ty), w10=tx*(1-ty), w01=(1-tx)*ty, w11=tx*ty;
+    out.x = cellU(i0,j0)*w00 + cellU(i1,j0)*w10 + cellU(i0,j1)*w01 + cellU(i1,j1)*w11;
+    // 화면 y는 남쪽이 +  → 북향(v>0)은 -y
+    out.y = -(cellV(i0,j0)*w00 + cellV(i1,j0)*w10 + cellV(i0,j1)*w01 + cellV(i1,j1)*w11);
+    if(isLand(wx,wy)){ out.x=0; out.y=0; return out; }   // 육지 유속 0
+    // 상한: 어떤 해류도 선박 최고속의 60%를 넘지 않게 (역류에 갇힘 방지)
+    const m = Math.hypot(out.x,out.y);
+    if(m > CUR_CAP){ out.x *= CUR_CAP/m; out.y *= CUR_CAP/m; }
+    return out;
+  }
+  return {sample, refMs:C.refMs};
+})();
+const curVec = {x:0,y:0};
+
+// ===== 캔버스 =====
+const cv = document.getElementById('c'); const ctx = cv.getContext('2d');
+let W=0,H=0,DPR=1;
+function resize(){
+  DPR = Math.min(window.devicePixelRatio||1, 2);
+  W = window.innerWidth; H = window.innerHeight;
+  cv.width = W*DPR; cv.height = H*DPR;
+  // A안: 최소 배율 = '월드 한 바퀴(WORLD_W)가 화면 폭을 꽉 채움' → 지구 반복 방지
+  ZMIN = W / WORLD_W;
+  if(typeof targetZoom==='number' && targetZoom<ZMIN) targetZoom=ZMIN;
+  if(typeof zoom==='number' && zoom<ZMIN) zoom=ZMIN;
+}
+window.addEventListener('resize', resize);
+
+// ===== 카메라 / 선박 상태 =====
+const ZMAX=13;                         // 데이터 정밀도(0.01°≈1.1km) 한계에 맞춘 최대 배율
+let ZMIN=0.075;                        // resize()에서 '월드 한 바퀴=화면폭'으로 동적 설정
+let zoom = 0.42;                       // 화면px / 월드px
+let targetZoom = zoom;
+resize();                              // 최초 호출: ZMIN 계산 + 초기 배율 클램프
+const ship = (()=>{ const [x,y]=project(-24, 31);
+  return {x,y,vx:0,vy:0,head:-Math.PI/2, speed:0, sail:0}; })(); // 대서양, 초기 침로 북
+const SPEED = 8 * KN_TO_PX;        // 전속(돛 4/4) = 실제 8노트 ≈ 72.7 월드px/초
+const SAIL_MAX = 4;                // 돛 단수 0~4
+const ACC_UP = SPEED/3.4, ACC_DN = SPEED/1.8;   // 정지→전속 3.4초 / 전속→정지 1.8초
+const TURN_FULL = 1.15;            // 전속 시 선회율(rad/s)
+const TURN_IDLE = 0.12;            // 정지 시 선회율 배수
+const wake = [];
+
+// ===== 입력 =====
+const keys = {};
+addEventListener('keydown',e=>{
+  const k=e.key.toLowerCase();
+  keys[k]=true;
+  // 돛 단수 조정 — 키를 누르고 있어도 1단씩만 (자동반복 무시)
+  if(!e.repeat){
+    if(k==='w'||k==='arrowup')   ship.sail = Math.min(SAIL_MAX, ship.sail+1);
+    if(k==='s'||k==='arrowdown') ship.sail = Math.max(0, ship.sail-1);
+  }
+  if(k==='g') show.grat=!show.grat;
+  if(k==='h') show.rhumb=!show.rhumb;
+  if(k==='c') show.coll=!show.coll;
+  if(k==='k') show.cur=!show.cur;
+  if(k==='i'){ const p=document.getElementById('info'); p.style.display = p.style.display==='flex'?'none':'flex'; }
+  if(k==='+'||k==='=') targetZoom=Math.min(ZMAX,targetZoom*1.18);
+  if(k==='-'||k==='_') targetZoom=Math.max(ZMIN,targetZoom/1.18);
+  if(['arrowup','arrowdown','arrowleft','arrowright',' '].includes(k)) e.preventDefault();
+});
+addEventListener('keyup',e=>{ keys[e.key.toLowerCase()]=false; });
+document.getElementById('info').addEventListener('click',()=>{ document.getElementById('info').style.display='none'; });
+cv.addEventListener('wheel',e=>{
+  e.preventDefault();
+  targetZoom = Math.max(ZMIN,Math.min(ZMAX, targetZoom * (e.deltaY<0?1.12:1/1.12)));
+},{passive:false});
+const show = {grat:true, rhumb:true, coll:false, cur:true};
+
+// ===== 해류 시각화 (표류 파티클) — K 로 표시 토글, 물리는 항상 적용 =====
+const CURVIZ = (function(){
+  const MAX = 1100;                        // 화면에 보이는 영역에만 유지
+  const REF = 0.746 * MS_TO_PX;            // p99 유속 = 밝기 정규화 기준
+  const TAIL = 8;                          // 궤적 점 수
+  const P = [];
+  const v = {x:0,y:0};
+  let alpha = 0;                           // 표시 전환 페이드 (0~1)
+  function spawn(p, first){
+    const hw=(W/2)/zoom, hh=(H/2)/zoom;
+    p.x = ship.x + (Math.random()*2-1)*hw*1.1;
+    p.y = ship.y + (Math.random()*2-1)*hh*1.1;
+    if(p.y<0) p.y=0; else if(p.y>WORLD_H) p.y=WORLD_H;
+    p.life = 2.2 + Math.random()*2.6;
+    p.age = first ? Math.random()*p.life : 0;
+    p.s = 0; p.tr = []; p.lx = p.x; p.ly = p.y;
+  }
+  for(let i=0;i<MAX;i++){ const p={}; spawn(p,true); P.push(p); }
+  function step(dt){
+    alpha += ((show.cur?1:0)-alpha)*Math.min(1, dt*6);   // 부드럽게 나타나고 사라짐
+    if(!CUR || alpha<0.006) return;
+    const hw=(W/2)/zoom, hh=(H/2)/zoom;
+    const gap = 2/zoom;                    // 궤적 점 간격 ≈ 화면 2px (배율 무관하게 일정한 길이)
+    for(const p of P){
+      CUR.sample(p.x, p.y, v);
+      const m = Math.hypot(v.x, v.y);
+      p.s = Math.min(1, Math.sqrt(m/REF));
+      p.x += v.x*dt; p.y += v.y*dt;        // 실제 유속 그대로 이동 (증폭 없음)
+      if(Math.hypot(p.x-p.lx, p.y-p.ly) >= gap){
+        p.tr.push(p.x, p.y); p.lx=p.x; p.ly=p.y;
+        if(p.tr.length > TAIL*2) p.tr.splice(0,2);
+      }
+      p.age += dt;
+      let dx = p.x - ship.x;
+      if(dx>WORLD_W/2) dx-=WORLD_W; else if(dx<-WORLD_W/2) dx+=WORLD_W;
+      if(p.age>p.life || m===0 || Math.abs(dx)>hw*1.15 || Math.abs(p.y-ship.y)>hh*1.15) spawn(p,false);
+    }
+  }
+  function sx(wx){
+    let dx = wx - ship.x;
+    if(dx>WORLD_W/2) dx-=WORLD_W; else if(dx<-WORLD_W/2) dx+=WORLD_W;
+    return W/2 + dx*zoom;
+  }
+  function draw(){
+    if(!CUR || alpha<0.006) return;
+    screenTransform();
+    ctx.lineCap='round'; ctx.lineJoin='round';
+    for(const p of P){
+      const n = p.tr.length/2;
+      const fade = Math.min(1, Math.min(p.age, p.life-p.age)/0.55);
+      const a = 0.85*alpha*fade*(0.16 + 0.84*p.s);      // 밝기 = 세기
+      if(a < 0.012) continue;
+      const lw = 0.9 + 1.7*p.s;                          // 굵기 = 세기
+      if(n < 2){                                         // 거의 정지한 해역 — 점으로 표시
+        ctx.fillStyle='rgba(255,247,225,'+(a*0.5).toFixed(3)+')';
+        ctx.fillRect(sx(p.x)-lw/2, H/2+(p.y-ship.y)*zoom-lw/2, lw, lw);
+        continue;
+      }
+      ctx.strokeStyle='rgba(255,247,225,'+(a*0.42).toFixed(3)+')';
+      ctx.lineWidth = lw*0.8;
+      ctx.beginPath();
+      ctx.moveTo(sx(p.tr[0]), H/2+(p.tr[1]-ship.y)*zoom);
+      for(let k=1;k<n;k++) ctx.lineTo(sx(p.tr[k*2]), H/2+(p.tr[k*2+1]-ship.y)*zoom);
+      ctx.stroke();
+      ctx.strokeStyle='rgba(255,247,225,'+a.toFixed(3)+')';   // 머리 부분을 밝게 — 진행 방향
+      ctx.lineWidth = lw;
+      ctx.beginPath();
+      ctx.moveTo(sx(p.tr[(n-2)*2]), H/2+(p.tr[(n-2)*2+1]-ship.y)*zoom);
+      ctx.lineTo(sx(p.tr[(n-1)*2]), H/2+(p.tr[(n-1)*2+1]-ship.y)*zoom);
+      ctx.stroke();
+    }
+  }
+  return {step, draw};
+})();
+
+// ===== 업데이트 =====
+let last=performance.now(), wakeT=0;
+function update(dt){
+  zoom += (targetZoom-zoom)*Math.min(1,dt*10);
+  // === 조타: A/D 회전, 속력은 돛 단수로 결정 ===
+  const boost = (keys['shift']?1.25:1);   // 순풍 — 최대 10노트 (범선 현실 범위)
+  const target = SPEED * (ship.sail/SAIL_MAX) * boost;
+  // 목표 속력으로 서서히 (가속은 느리고 감속은 빠르게)
+  if(ship.speed < target) ship.speed = Math.min(target, ship.speed + ACC_UP*dt);
+  else                    ship.speed = Math.max(target, ship.speed - ACC_DN*dt);
+  if(ship.speed < 0) ship.speed = 0;              // 후진 없음
+  // 선회: 속력이 빠를수록 잘 돌고, 정지에 가까우면 거의 안 돎
+  const rf = TURN_IDLE + (1-TURN_IDLE)*Math.min(1, ship.speed/SPEED);
+  let turn = 0;
+  if(keys['a']||keys['arrowleft'])  turn -= 1;
+  if(keys['d']||keys['arrowright']) turn += 1;
+  if(turn) ship.head += turn * TURN_FULL * rf * dt;
+  // 침로 방향으로만 전진 (횡이동 없음)
+  ship.vx = Math.cos(ship.head)*ship.speed;
+  ship.vy = Math.sin(ship.head)*ship.speed;
+
+  // 해류 샘플 — 항상 적용 (K는 표시 여부만 바꿈)
+  curVec.x=0; curVec.y=0;
+  if(CUR) CUR.sample(ship.x, ship.y, curVec);
+
+  // 이동 + 해안 충돌(축 분리 슬라이드)
+  let nx = ship.x + (ship.vx + curVec.x)*dt;
+  let ny = ship.y + (ship.vy + curVec.y)*dt;
+  ny = Math.max(Y_TOP, Math.min(Y_BOT, ny));   // 극 차단
+  if(!isLand(nx,ny)){ ship.x=nx; ship.y=ny; ship.grounded=false; }
+  else {
+    // 해안을 따라 미끄러짐 (한 축만 허용)
+    if(!isLand(nx, ship.y)){ ship.x=nx; ship.grounded=false; }
+    else if(!isLand(ship.x, ny)){ ship.y=ny; ship.grounded=false; }
+    else { ship.speed=0; ship.sail=0; ship.grounded=true; }   // 완전 좌초 — 돛을 내림
+  }
+  ship.x = wrapX(ship.x);
+
+  // 항적
+  wakeT+=dt;
+  if(wakeT>0.05){ wakeT=0; wake.push({x:ship.x,y:ship.y}); if(wake.length>70) wake.shift(); }
+}
+
+// ===== 그리기 =====
+const SEA='#8bb0a8', SEA_D='#5f8a83', LAND_C='#d8bf8e', LAND_HI='#e7d3a6',
+      COAST='#6b4a2a', GRAT='rgba(74,54,32,.16)', RHUMB='rgba(120,72,40,.13)',
+      VOID='#20302d', FRAME='#5a3d20';
+// 수심 팔레트 — 기존 바다색(#8bb0a8)을 심해 자리에 두고 위아래로 확장
+const DEPTH_COL = ['#bdd2c4',   // 0–200m    연안·대륙붕
+                   '#a4c1b5',   // 200–1000m 대륙사면
+                   '#8bb0a8',   // 1000–4000m 심해
+                   '#6f948e',   // 4000–6000m 심해평원
+                   '#557a76'];  // 6000m+    해구
+const DEPTH_EDGE = 'rgba(60,44,26,0.20)';
+
+function worldTransform(k){
+  const a = zoom*DPR;
+  const e = (W/2 - ship.x*zoom + k*WORLD_W*zoom)*DPR;
+  const f = (H/2 - ship.y*zoom)*DPR;
+  ctx.setTransform(a,0,0,a,e,f);
+}
+function screenTransform(){ ctx.setTransform(DPR,0,0,DPR,0,0); }
+
+function drawGraticule(){
+  ctx.lineWidth = 1/zoom; ctx.strokeStyle = GRAT; ctx.beginPath();
+  for(let lon=-180; lon<=180; lon+=15){ const x=(lon+180)*DEG2PXX; ctx.moveTo(x,0); ctx.lineTo(x,WORLD_H); }
+  for(let lat=-75; lat<=75; lat+=15){ const y=(90-lat)*DEG2PXY; ctx.moveTo(0,y); ctx.lineTo(WORLD_W,y); }
+  ctx.stroke();
+  // 적도 강조
+  ctx.strokeStyle='rgba(74,54,32,.30)'; ctx.beginPath();
+  const yeq=(90)*DEG2PXY; ctx.moveTo(0,yeq); ctx.lineTo(WORLD_W,yeq); ctx.stroke();
+}
+function drawRhumb(){
+  ctx.lineWidth = 1/zoom; ctx.strokeStyle = RHUMB;
+  const hubs=[[2100,1500],[5600,1350],[3900,2650]];
+  for(const [hx,hy] of hubs){
+    ctx.beginPath();
+    for(let a=0;a<16;a++){ const r=2600, an=a*Math.PI/8;
+      ctx.moveTo(hx,hy); ctx.lineTo(hx+Math.cos(an)*r, hy+Math.sin(an)*r); }
+    ctx.stroke();
+  }
+}
+
+function drawWorld(k){
+  worldTransform(k);
+  // 바다 — 수심 밴드 (얕은 것부터 덮어 칠함: 누적 폴리곤 구조상 이 순서라야 함)
+  ctx.fillStyle = DEPTH_COL[0]; ctx.fillRect(0,0,WORLD_W,WORLD_H);   // 0~200m 기준면
+  if(BATHY){
+    for(let b=0;b<BATHY.length;b++){
+      ctx.fillStyle = DEPTH_COL[b+1];
+      ctx.fill(BATHY[b].path,'evenodd');
+    }
+    ctx.strokeStyle = DEPTH_EDGE; ctx.lineWidth = 0.8/zoom;          // 등심선 — 동판화풍 얇은 윤곽
+    for(let b=0;b<BATHY.length;b++) ctx.stroke(BATHY[b].path);
+  }
+  if(show.rhumb) drawRhumb();
+  if(show.grat)  drawGraticule();
+  // 육지 (해안 음영 → 채움 → 해안선)
+  ctx.lineJoin='round';
+  ctx.strokeStyle='rgba(60,40,22,.28)'; ctx.lineWidth=3.2/zoom; ctx.stroke(landPath);
+  ctx.fillStyle = LAND_C; ctx.fill(landPath,'evenodd');
+  ctx.strokeStyle = COAST; ctx.lineWidth = 1.1/zoom; ctx.stroke(landPath);
+  if(show.coll){ ctx.fillStyle='rgba(200,40,30,.34)'; ctx.fill(landPath,'evenodd'); }
+  // 해도 상하단 경계
+  ctx.strokeStyle='rgba(50,34,18,.5)'; ctx.lineWidth=2/zoom;
+  ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(WORLD_W,0);
+  ctx.moveTo(0,WORLD_H); ctx.lineTo(WORLD_W,WORLD_H); ctx.stroke();
+}
+
+function drawShip(){
+  screenTransform();
+  // 항적
+  ctx.lineWidth=2; ctx.strokeStyle='rgba(240,235,210,.0)';
+  for(let i=1;i<wake.length;i++){
+    // 화면상 가장 가까운 이미지로 투영
+    let dx = wake[i].x - ship.x;
+    if(dx>WORLD_W/2) dx-=WORLD_W; else if(dx<-WORLD_W/2) dx+=WORLD_W;
+    const sx = W/2 + dx*zoom, sy = H/2 + (wake[i].y-ship.y)*zoom;
+    let dx0 = wake[i-1].x - ship.x;
+    if(dx0>WORLD_W/2) dx0-=WORLD_W; else if(dx0<-WORLD_W/2) dx0+=WORLD_W;
+    const px = W/2 + dx0*zoom, py = H/2 + (wake[i-1].y-ship.y)*zoom;
+    ctx.strokeStyle='rgba(245,240,220,'+(0.30*i/wake.length)+')';
+    ctx.beginPath(); ctx.moveTo(px,py); ctx.lineTo(sx,sy); ctx.stroke();
+  }
+  // 선박 (화면 고정 크기 — 축척 물체가 아닌 해도 기호)
+  ctx.save(); ctx.translate(W/2,H/2); ctx.rotate(ship.head);
+  const s=1.15;   // 선체 길이 ≈ 33 화면px
+  // 선체
+  ctx.fillStyle='#4a2f18'; ctx.strokeStyle='#2c1a0c'; ctx.lineWidth=1.4;
+  ctx.beginPath();
+  ctx.moveTo(16*s,0); ctx.quadraticCurveTo(4*s,7*s,-11*s,5*s);
+  ctx.lineTo(-13*s,0); ctx.lineTo(-11*s,-5*s);
+  ctx.quadraticCurveTo(4*s,-7*s,16*s,0); ctx.closePath(); ctx.fill(); ctx.stroke();
+  // 갑판
+  ctx.fillStyle='#7a5533';
+  ctx.beginPath(); ctx.moveTo(11*s,0); ctx.quadraticCurveTo(1*s,4*s,-9*s,3*s);
+  ctx.lineTo(-9*s,-3*s); ctx.quadraticCurveTo(1*s,-4*s,11*s,0); ctx.closePath(); ctx.fill();
+  // 돛
+  // 돛 — 속력에 비례해 크기 변화 (정지 30% ~ 전속 100%)
+  const sf = 0.30 + 0.70*Math.min(1, ship.speed/SPEED);
+  ctx.fillStyle='#f0e6c6'; ctx.strokeStyle='#b9a679'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(2*s,0);
+  ctx.lineTo(2*s-8*s*sf, 7*s*sf); ctx.lineTo(2*s-8*s*sf, -7*s*sf);
+  ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.fillStyle='#3a2a14'; ctx.beginPath(); ctx.arc(2*s,0,1.6,0,7); ctx.fill(); // 마스트
+  ctx.restore();
+}
+
+function compass(){
+  screenTransform();
+  const cx=W-58, cy=H-70, R=34;
+  ctx.save();
+  ctx.fillStyle='rgba(30,44,41,.55)'; ctx.beginPath(); ctx.arc(cx,cy,R+8,0,7); ctx.fill();
+  ctx.strokeStyle='#c9b483'; ctx.lineWidth=1.5; ctx.beginPath(); ctx.arc(cx,cy,R,0,7); ctx.stroke();
+  // 8방위 별
+  for(let i=0;i<8;i++){ const a=i*Math.PI/4;
+    ctx.fillStyle = i%2? 'rgba(201,180,131,.5)':'#e7d6a6';
+    ctx.beginPath(); ctx.moveTo(cx+Math.cos(a)*R, cy+Math.sin(a)*R);
+    ctx.lineTo(cx+Math.cos(a+Math.PI/8)*6, cy+Math.sin(a+Math.PI/8)*6);
+    ctx.lineTo(cx+Math.cos(a-Math.PI/8)*6, cy+Math.sin(a-Math.PI/8)*6);
+    ctx.closePath(); ctx.fill(); }
+  // 진행방향 바늘
+  ctx.save(); ctx.translate(cx,cy); ctx.rotate(ship.head);
+  ctx.fillStyle='#c0392b'; ctx.beginPath();
+  ctx.moveTo(R-4,0); ctx.lineTo(-6,4); ctx.lineTo(-6,-4); ctx.closePath(); ctx.fill();
+  ctx.restore();
+  ctx.fillStyle='#f2e6bf'; ctx.font='11px Georgia'; ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText('N',cx,cy-R-0); ctx.restore();
+}
+
+function frameVignette(){
+  screenTransform();
+  const g=ctx.createRadialGradient(W/2,H/2,Math.min(W,H)*0.35,W/2,H/2,Math.max(W,H)*0.72);
+  g.addColorStop(0,'rgba(0,0,0,0)'); g.addColorStop(1,'rgba(20,14,6,.42)');
+  ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+  // 이중 테두리
+  ctx.strokeStyle=FRAME; ctx.lineWidth=6; ctx.strokeRect(9,9,W-18,H-18);
+  ctx.strokeStyle='#8a6a3d'; ctx.lineWidth=1.5; ctx.strokeRect(15,15,W-30,H-30);
+}
+
+const DIRS=['N','NE','E','SE','S','SW','W','NW'];
+function fmt(v,pos,neg){ const h=v>=0?pos:neg; return Math.abs(v).toFixed(1)+'°'+h; }
+function drawHUD(){
+  const lon = wrapX(ship.x)/WORLD_W*360-180;
+  const lat = 90 - ship.y/WORLD_H*180;
+  const sp = Math.hypot(ship.vx+curVec.x, ship.vy+curVec.y);   // 대지속력(해류 포함)
+  const hd = (ship.head*180/Math.PI+90+360)%360;   // 0=N 기준 표시
+  const dir = DIRS[Math.round(hd/45)%8];
+  const sail = '▮'.repeat(ship.sail) + '▯'.repeat(SAIL_MAX-ship.sail);
+  const grounded = ship.grounded;
+  // 해류 표시 (유향 = 흘러가는 방향)
+  const cs = Math.hypot(curVec.x,curVec.y);
+  let curTxt;
+  if(!CUR) curTxt = '<span style="color:#c9a">해류 데이터 없음</span>';
+  else if(cs*PX_TO_KN < 0.05) curTxt = '해류 <span class="v">잔잔</span>';
+  else {
+    const cb=(Math.atan2(curVec.x,-curVec.y)*180/Math.PI+360)%360;
+    curTxt = '해류 <span class="v">'+(cs*PX_TO_KN).toFixed(2)+' kn '+DIRS[Math.round(cb/45)%8]+'쪽으로</span>';
+  }
+  document.getElementById('hud').innerHTML =
+    '<b>WORLD NAUTICAL CHART</b> · Stage 1<br>'+
+    '위도 <span class="v">'+fmt(lat,'N','S')+'</span>  경도 <span class="v">'+fmt(lon,'E','W')+'</span><br>'+
+    '침로 <span class="v">'+hd.toFixed(0)+'° '+dir+'</span>  돛 <span class="v">'+sail+'</span>  속력 <span class="v">'+(sp*PX_TO_KN).toFixed(1)+' kn</span>  배율 <span class="v">×'+zoom.toFixed(2)+'</span><br>'+
+    curTxt+
+    (grounded?'<br><span style="color:#ff9a76">⚓ 좌초 — 돛을 내렸다. A/D로 뱃머리를 돌리시오</span>':'');
+}
+
+function loop(now){
+  let dt=(now-last)/1000; last=now; if(dt>0.05) dt=0.05;
+  update(dt);
+  CURVIZ.step(dt);
+  // 배경(해도 밖 = 미지의 바다)
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  ctx.fillStyle=VOID; ctx.fillRect(0,0,W,H);
+  // 보이는 순환 오프셋만 그림
+  const halfW = (W/2)/zoom;
+  const leftEdge = ship.x-halfW, rightEdge = ship.x+halfW;
+  for(let k=-1;k<=1;k++){
+    const x0=k*WORLD_W, x1=(k+1)*WORLD_W;
+    if(x1>=leftEdge && x0<=rightEdge) drawWorld(k);
+  }
+  CURVIZ.draw();
+  drawShip();
+  compass();
+  frameVignette();
+  drawHUD();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+console.log('mask',MASK_W+'x'+MASK_H,'| 1px =',(40075/WORLD_W).toFixed(2),'km | ZMAX',ZMAX);
+</script>
+</body>
+</html>
