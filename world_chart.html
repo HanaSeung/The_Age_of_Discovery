@@ -112,8 +112,14 @@
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   #tune .row>input[type=range]{flex:1 1 auto;min-width:0;width:auto;height:16px;
     accent-color:#b08d57;cursor:pointer;margin:0;}
+  /* 값 칸은 직접 입력도 받는다. 슬라이더로 잡기 어려운 값을 타이핑하기 위한 것이라
+     평소에는 글자처럼 보이게 두고, 손을 올렸을 때만 입력칸 티를 낸다. */
   #tune .row>.val{flex:0 0 78px;text-align:right;color:#ffd98a;
-    font-family:var(--numfont);font-size:14px;white-space:nowrap;}
+    font-family:var(--numfont);font-size:14px;white-space:nowrap;
+    background:transparent;border:1px solid transparent;border-radius:3px;
+    padding:1px 3px;min-width:0;cursor:text;}
+  #tune .row>.val:hover{border-color:#4a4234;}
+  #tune .row>.val:focus{outline:none;border-color:#b08d57;background:#1a1710;}
   #tune .row>.val.ch{color:#9fe0a0;}          /* 기본값에서 바뀐 값 */
   #tune .out{background:#101a19;border:1px solid #3a5450;border-radius:4px;
     padding:8px 10px;margin-top:4px;line-height:1.7;font-size:11.5px;color:#bfd6d0;}
@@ -1247,7 +1253,8 @@ const TUNE = (function(){
       const [k,lab,mn,mx,st] = sp, id = idOf(k);
       h += '<div class="row" title="기본값 '+pdef(k)+'"><span class="nm">'+lab+'</span>'+
            '<input type="range" id="i_'+id+'" min="'+mn+'" max="'+mx+'" step="'+st+'">'+
-           '<span class="val" id="v_'+id+'"></span></div>';
+           '<input type="text" class="val" id="v_'+id+'" inputmode="decimal" '+
+           'spellcheck="false" autocomplete="off"></div>';
     }
     h += '<div class="out" id="tuneOut"></div>'+
          '<div class="btns"><button id="tCopy">값 복사</button>'+
@@ -1265,6 +1272,24 @@ const TUNE = (function(){
       inputs[id] = inp; vals[id] = document.getElementById('v_'+id);
       inp.addEventListener('input', ()=>{
         pset(key, parseFloat(inp.value));
+        save(); refresh();
+      });
+      // 값 칸 직접 입력 — 슬라이더로는 잡기 어려운 값을 타이핑한다.
+      // 반영은 Enter 나 칸을 벗어날 때만. 입력 도중에 반영하면 '2000' 을 치려고
+      // '2' 를 누른 순간 2 가 되어 버린다.
+      const box = vals[id];
+      box.addEventListener('focus', ()=>box.select());   // 곧바로 덮어쓰게
+      box.addEventListener('keydown', e=>{
+        if(e.key === 'Enter'){ e.preventDefault(); box.blur(); }
+        if(e.key === 'Escape'){ e.preventDefault(); pull(); box.blur(); }
+      });
+      box.addEventListener('change', ()=>{
+        // '6000 km' 처럼 단위가 붙어 있어도 parseFloat 이 숫자까지만 읽는다.
+        const v = parseFloat(box.value);
+        if(!isFinite(v)){ pull(); return; }             // 글자를 쳤으면 되돌린다
+        // 위로는 슬라이더 범위를 넘겨도 받는다 — 배율에 따라 필요한 값이 크게 달라진다.
+        // 아래로만 막는다. 0 이 들어가면 나눗셈이 무한대가 되는 값들이 있다.
+        pset(key, Math.max(sp[2], v));
         save(); refresh();
       });
     }
@@ -1302,7 +1327,10 @@ const TUNE = (function(){
       const key = sp[0], id = idOf(key), d = sp[6];
       const v = pget(key);
       if(document.activeElement !== inputs[id]) inputs[id].value = v;
-      vals[id].textContent = v.toFixed(d) + (sp[5] ? ' '+sp[5] : '');
+      // 값 칸도 마찬가지. 패널은 0.15초마다 다시 그리는데, 타이핑 중인 칸을
+      // 덮어쓰면 글자가 지워진다.
+      if(document.activeElement !== vals[id])
+        vals[id].value = v.toFixed(d) + (sp[5] ? ' '+sp[5] : '');
       // 기본값에서 벗어난 값은 색으로 알린다 — 무엇을 만졌는지 한눈에 보인다
       const df = pdef(key);
       vals[id].classList.toggle('ch', typeof df === 'number' && Math.abs(v - df) > 1e-9);

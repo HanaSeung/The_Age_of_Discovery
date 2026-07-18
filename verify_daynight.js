@@ -30,6 +30,21 @@ chk('안쪽 원은 바깥 원의 비율로 따라온다', /r1\s*\*\s*LAMP_CORE/.
 chk('등불 거리 최소가 0 이다', /'nightLamp',\s*'등불 거리',\s*0,/.test(src));
 chk('등불 0 이면 통째로 덮는다', /if\(r1 < 1\)\{/.test(src));
 
+// ===== 1-4. 값 칸 직접 입력 =====
+console.log('\n=== 1-4. 값 칸 직접 입력 ===');
+chk('값 칸이 입력칸이다', /<input type="text" class="val"/.test(src));
+chk('span 이던 값 칸이 남아 있지 않다', !/<span class="val"/.test(src));
+chk('Enter 로 확정한다', /e\.key === 'Enter'/.test(src));
+chk('Escape 로 되돌린다', /e\.key === 'Escape'/.test(src));
+chk('입력 도중이 아니라 change 에서 반영한다',
+    /box\.addEventListener\('change'/.test(src));
+chk('숫자가 아니면 되돌린다', /if\(!isFinite\(v\)\)\{ pull\(\); return; \}/.test(src));
+chk('아래로만 막고 위로는 열어 둔다', /pset\(key, Math\.max\(sp\[2\], v\)\)/.test(src));
+chk('타이핑 중인 칸은 덮어쓰지 않는다',
+    /document\.activeElement !== vals\[id\]/.test(src));
+chk('조타 키가 입력칸에서 차단된다',
+    /t==='INPUT'\|\|t==='SELECT'\|\|t==='TEXTAREA'/.test(src));
+
 // ===== 1-2. 등불 크기 — km 가 화면에서 몇 px 이 되는가 =====
 const KM_PER_PX = 40075/8192;                       // 월드 1px = 4.892 km
 const lamp = Number((src.match(/nightLamp\s*:\s*(\d+)/) || [])[1]);
