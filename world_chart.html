@@ -412,6 +412,34 @@ const EPOCH_DOW = 3;                  // Wed
 function dow(){ return DOW[(EPOCH_DOW + Math.floor(gameDay)) % 7]; }
 function dowK(){ return DOWK[(EPOCH_DOW + Math.floor(gameDay)) % 7]; }
 
+// ===== 태양 — 낮과 밤 =====
+// 정밀 천문이 아니라 항해 감각용 근사다. 균시차(해시계와 시계가 최대 ±15분 어긋나는
+// 현상)는 무시한다. 대신 위도에 따른 낮 길이 변화와 극지방의 백야·극야는 그대로 나온다.
+// 계절은 따로 만들지 않았다 — 적위가 날짜를 따라 움직이므로 저절로 따라온다.
+const AXIAL = 23.44 * Math.PI/180;      // 지축 기울기
+const TWILIGHT = 6 * Math.PI/180;       // 해가 진 뒤 이만큼 더 내려가야 완전한 밤
+
+// 태양 적위 — 여름엔 북으로, 겨울엔 남으로 ±23.44° 오간다.
+// 80.5일 ≈ 춘분(3월 21일). 이 게임의 달력은 365일 고정이라 윤년 보정이 없다.
+function sunDecl(){
+  return AXIAL * Math.sin(2*Math.PI*((gameDay % 365) - 80.5)/365);
+}
+// 그 자리에서 올려다본 태양의 고도(라디안). 0 이면 해가 지평선에 걸린 순간이다.
+function sunAlt(wx, wy){
+  const lon = (wrapX(wx)/WORLD_W*360 - 180) * Math.PI/180;
+  const lat = (90 - wy/DEG2PXY) * Math.PI/180;
+  const d   = sunDecl();
+  const h   = ((gameDay % 1) - 0.5) * 2*Math.PI + lon;   // 시간각 — 경도만큼 어긋난다
+  return Math.asin(Math.sin(lat)*Math.sin(d) + Math.cos(lat)*Math.cos(d)*Math.cos(h));
+}
+// 어둠의 정도 0~1. 고도 0 위는 낮, -6° 아래는 완전한 밤, 사이는 부드럽게 넘어간다.
+function darkness(alt){
+  let t = -alt / TWILIGHT;
+  if(t <= 0) return 0;
+  if(t >= 1) return 1;
+  return t*t*(3-2*t);                   // 경계에서 뚝 끊기지 않게
+}
+
 // 날짜 표기 방식 — 설정 탭에서 고른다.
 // [키, 이름, 만드는 함수, 글자 크기]
 // 크기가 제각각인 이유: 표기마다 길이가 달라서 한 크기로는 긴 것이 잘린다.
@@ -518,7 +546,11 @@ let SHIP = SHIPS.player;                           // 지금 조작 중인 배
 // 값이 확정되면 여기의 기본값을 고치고 패널을 제거한다.
 // 여기 남은 것은 전부 '세계' 값이다. 배에 딸린 값은 SHIP.spec 으로 갔다.
 const P = {
-  hoursPerSec: 24,    // 시계: 게임 1초 = 실제 N시간 (24 = 1일/초)
+  hoursPerSec: 2.0,   // 시계: 게임 1초 = 실제 N시간 (2.0 = 하루 12초)
+  nightMode : 2,      // 밤 표현: 0 끄기 · 1 어둡게 · 2 등불 · 3 색조
+  nightGain : 1.0,    // 밤의 세기 (0 = 밤이 와도 그대로, 1 = 기준)
+  nightLamp : 6000,   // 등불이 닿는 거리(km) — 2번에서만 쓴다. 화면이 아니라 거리 기준이라
+                      //   지도를 확대하면 원이 커지고 축소하면 작아진다.
   windMin   : 0.5,    // 이 풍속(m/s) 이하는 무풍 — 배가 멈춤
   windFull  : 9.0,    // 이 풍속 이상이면 돛이 최대 추진력
                       //  (6.0 으로 낮추면 바다 대부분이 100%가 되어 무풍대가 사라진다)
@@ -1041,6 +1073,43 @@ function drawWindArrows(){
   }
 }
 
+// ===== 밤 — 다 그려진 해도 위에 막을 한 장 덮는다 =====
+// 지도와 배는 어두워지고, 나침반·날짜 같은 계기는 밝게 남는다.
+// 밤에는 등불로 계기를 비춰 보니 그 편이 자연스럽다.
+// 세 가지 방식은 확정 뒤에도 남겨 둔다. 상황에 따라 골라 쓸 수 있어야 한다.
+const NIGHT = '11,22,51';               // 밤하늘 색 (짙은 남색)
+const LAMP_CORE = 0.21;                 // 완전히 밝은 안쪽 원 = 바깥 원의 이 비율
+function nightVeil(){
+  const mode = Math.round(P.nightMode);
+  if(mode === 0) return;
+  const a = darkness(sunAlt(ship.x, ship.y)) * P.nightGain;
+  if(a <= 0.002) return;
+  screenTransform();
+  if(mode === 2){
+    // 등불 — 배 둘레만 남기고 덮는다. 밤에 시야가 좁아지는 것이 눈에 보인다.
+    // 거리 기준이라 배율을 곱한다. 나중에 감시범위(s:sight)와 이어 붙이려면
+    // 화면이 아니라 km 로 재 두어야 단위가 맞는다.
+    const r1 = (P.nightLamp / KM_PER_PX) * zoom;    // km → 월드px → 화면px
+    if(r1 < 1){
+      // 등불이 사실상 없다 — 통째로 덮는다.
+      // 반지름 0 짜리 그라데이션은 캔버스가 아예 안 그리므로 여기서 갈라 준다.
+      ctx.fillStyle = 'rgba('+NIGHT+','+(a*0.80).toFixed(3)+')';
+    }else{
+      const g = ctx.createRadialGradient(W/2,H/2,r1*LAMP_CORE, W/2,H/2,r1);
+      g.addColorStop(0, 'rgba('+NIGHT+',0)');
+      g.addColorStop(1, 'rgba('+NIGHT+','+(a*0.80).toFixed(3)+')');
+      ctx.fillStyle = g;
+    }
+  }else if(mode === 3){
+    // 색조 — 어둡게 하지 않고 푸른 기만 입힌다. 해도는 계속 잘 보인다.
+    ctx.fillStyle = 'rgba(40,72,132,'+(a*0.30).toFixed(3)+')';
+  }else{
+    // 어둡게 — 화면 전체를 고르게 덮는다. 가장 단순하다.
+    ctx.fillStyle = 'rgba('+NIGHT+','+(a*0.62).toFixed(3)+')';
+  }
+  ctx.fillRect(0,0,W,H);
+}
+
 function frameVignette(){
   screenTransform();
   const g=ctx.createRadialGradient(W/2,H/2,Math.min(W,H)*0.35,W/2,H/2,Math.max(W,H)*0.72);
@@ -1093,6 +1162,9 @@ const TUNE = (function(){
     ['windFull',  '최대 추진',   2,   20,  0.5, 'm/s',  1],
     ['@세계'],
     ['hoursPerSec','시계',        0.5,  48, 0.5, '시간', 1],
+    ['nightMode', '밤 표현',     0,    3,  1,   '',     0],
+    ['nightGain', '밤 세기',     0,  1.5,  0.05,'배',   2],
+    ['nightLamp', '등불 거리',   0, 10000,  25, 'km',  0],
     ['curGain',   '해류 세기',   0,    5,  0.1, '배',   1],
     ['@화면'],
     ['*zoom',     '지도 배율',   0.3, 100, 0.1, '×',    2],
@@ -1369,6 +1441,9 @@ const TUNE = (function(){
       'windMin    : '+P.windMin+'      // 무풍 기준(m/s)\n'+
       'windFull   : '+P.windFull+'      // 최대 추진 풍속(m/s)\n'+
       'hoursPerSec: '+P.hoursPerSec+'      // 시계: 1초 = N시간\n'+
+      'nightMode  : '+P.nightMode+'      // 밤 표현 0끄기 1어둡게 2등불 3색조\n'+
+      'nightGain  : '+P.nightGain+'      // 밤의 세기\n'+
+      'nightLamp  : '+P.nightLamp+'      // 등불이 닿는 거리(km)\n'+
       'curGain    : '+P.curGain+'      // 해류 배율\n'+
       'shipScale  : '+P.shipScale+'      // 배 크기(그림)\n'+
       'zoom       : '+zoom.toFixed(2)+'      // 지도 배율\n';
@@ -1401,6 +1476,7 @@ function loop(now){
   CURVIZ.draw();
   drawWindArrows();
   drawShip();
+  nightVeil();
   compass();
   frameVignette();
   // [테스트] 패널이 열려 있으면 휠 확대 등 외부 변경을 반영 (0.15초 간격)
