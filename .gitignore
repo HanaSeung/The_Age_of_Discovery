@@ -4,6 +4,9 @@ ne_10m_bathymetry_*.geojson
 ne_50m_land.geojson
 oscar_raw.json
 
+# 작업 기록 (로컬 보관 전용 — GitHub에 올리지 않음)
+word_log/
+
 # 파이썬
 __pycache__/
 *.pyc
