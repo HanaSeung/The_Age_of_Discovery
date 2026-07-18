@@ -5,15 +5,15 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
 <title>大航海圖 · World Nautical Chart (Stage 1)</title>
 <style>
+  /* 숫자 글꼴 — 한 곳에서 바꾼다. 값·날짜·항해일이 모두 이걸 쓴다.
+     한글을 뒤에 붙여 두는 이유: Georgia 에는 한글이 없어 브라우저가 아무 글꼴이나 고른다.
+     여기 적어 두면 숫자·로마자는 Georgia, 한글은 UI 와 같은 맑은 고딕으로 정해진다.
+     (캔버스에 직접 그리는 나침반 글자는 CSS 변수를 못 읽으므로 따로 맞춰야 한다) */
+  :root{ --numfont: Georgia, 'Malgun Gothic', sans-serif; }
   html,body{margin:0;height:100%;background:#14211f;overflow:hidden;
     font-family:'Georgia','Times New Roman',serif;color:#e9ddc0;-webkit-font-smoothing:antialiased;}
   #c{display:block;position:fixed;inset:0;cursor:crosshair;touch-action:none;}
   .panel{position:fixed;pointer-events:none;user-select:none;text-shadow:0 1px 2px rgba(0,0,0,.6);}
-  #hud{top:14px;left:16px;font-size:13px;line-height:1.6;letter-spacing:.3px;
-    background:rgba(14,24,22,.62);border-radius:6px;padding:7px 12px;
-    backdrop-filter:blur(2px);max-width:52vw;}
-  #hud b{color:#f2e6bf;font-weight:600;}
-  #hud .v{color:#ffd98a;}
   /* 안내줄 — 해도 색과 톤이 겹쳐 묻히므로 어두운 배경판을 깐다 */
   #hint{bottom:12px;left:16px;font-size:12px;max-width:74vw;line-height:1.9;
     background:rgba(14,24,22,.78);border:1px solid rgba(122,90,52,.45);
@@ -25,11 +25,31 @@
   #hint .on kbd{background:#6b5518;border-color:#d8ae3c;color:#fff6d2;}
   #hint .off{color:#7d8884;}
   #hint .off kbd{background:#212b29;border-color:#3a4441;color:#8b9591;}
-  /* 출처 — 우하단은 나침반 자리다. 우상단으로 올린다.
-     (조정 패널이 열리면 그 폭만큼 왼쪽으로 비켜난다) */
-  #src{top:16px;right:16px;font-size:10.5px;color:#bfae86;opacity:.75;text-align:right;
-    line-height:1.5;transition:right .12s;}
-  body.tune-open #src{right:306px;}
+  #hint.hidden{display:none;}          /* 설정 탭의 체크상자로 통째로 끈다 */
+  /* ===== 나침반 카드 — 조정 패널과 같은 폭·같은 모습 =====
+     카드가 바탕을 맡으므로 화면 좌표 계산이 필요 없다. 안의 캔버스는 172px 고정.
+     폭 290 = 여백12 + 숫자 82 + 사이10 + 나침반172 + 여백12 + 테두리2
+     맨 위 띠(위도·경도)는 조정 패널의 날짜 띠와 같은 모습으로 둔다 — 두 카드가 짝을 이룬다.
+     높이 231 = 띠 33 + 여백24 + 캔버스172 + 테두리2 */
+  #compass{position:fixed;right:16px;bottom:16px;width:290px;z-index:5;
+    box-sizing:border-box;
+    background:rgba(18,28,26,.93);border:1px solid rgba(122,90,52,.55);border-radius:6px;
+    pointer-events:none;user-select:none;
+    font-family:'Segoe UI','Malgun Gothic',sans-serif;}
+  #compass .geo{padding:8px 12px;border-bottom:1px solid #3a5450;background:#121c1a;
+    border-radius:5px 5px 0 0;text-align:center;font-size:12.5px;color:#e9ddc0;}
+  #compass .geo s{color:#7f8f8b;font-size:10px;text-decoration:none;margin-right:2px;}
+  #compass .geo b{color:#ffd98a;font-family:var(--numfont);font-weight:400;}
+  #compass .body{display:flex;align-items:center;gap:10px;padding:12px;}
+  #compass .nums{flex:1 1 auto;text-align:right;line-height:1.15;}
+  /* 값은 크게, 단위는 아랫줄로. 한 줄에 두면 26px 에서 82px 칸을 넘는다 */
+  #compass .k {font-size:13px;color:#6f9aa8;}
+  #compass .v {font-size:26px;color:#8fd3e8;font-family:var(--numfont);line-height:1.05;}
+  #compass .u {font-size:12px;color:#6f9aa8;}
+  #compass .k2{font-size:13px;color:#a07068;margin-top:16px;}
+  #compass .v2{font-size:26px;color:#e0705f;font-family:var(--numfont);line-height:1.05;}
+  #compass .u2{font-size:12px;color:#a07068;}
+  #compass canvas{flex:0 0 auto;display:block;width:172px;height:172px;}
   #info{top:0;left:0;right:0;bottom:0;display:none;align-items:center;justify-content:center;
     background:rgba(12,20,19,.86);pointer-events:auto;z-index:5;}
   #info .card{max-width:560px;background:#efe2bf;color:#3a2c17;border:2px solid #7a5a34;
@@ -42,19 +62,59 @@
   kbd{background:#2c3b38;border:1px solid #4a5e59;border-bottom-width:2px;border-radius:4px;
     padding:0 5px;font-size:11px;color:#ffe9b8;font-family:monospace;}
   /* ===== [테스트] 조정 패널 — 값 확정 후 제거 ===== */
-  #tune{position:fixed;top:0;right:0;bottom:0;width:290px;z-index:6;
-    background:rgba(18,28,26,.93);border-left:1px solid #5a3d20;
-    padding:12px 14px 18px;overflow-y:auto;display:none;
-    font-family:'Segoe UI','Malgun Gothic',sans-serif;font-size:12px;color:#e9ddc0;}
+  /* 나침반 카드처럼 떠 있는 카드로 둔다 — 화면 끝에 붙이지 않는다.
+     높이는 내용만큼만. 다만 나침반 카드 자리는 침범하지 않도록 최대 높이를 건다.
+       max-height = 화면높이 − 위여백 14 − 카드높이 231 − 아래여백 16 − 사이 14 = 100vh − 275px
+     세로 배치: [메뉴(고정)] + [내용(스크롤)]. 스크롤은 아래 칸만 갖는다 —
+     메뉴까지 스크롤 상자에 넣으면 스크롤바가 생길 때 메뉴가 그 폭만큼 왼쪽으로 밀린다.
+     여닫기는 display 가 아니라 transform 으로 한다 (display 는 전환이 안 걸린다).
+     닫힘일 때는 화면 밖으로 밀어 두고 visibility 로 손이 닿지 않게 한다. */
+  #tune{position:fixed;top:14px;right:16px;width:290px;z-index:6;
+    max-height:calc(100vh - 275px);display:flex;flex-direction:column;
+    background:rgba(18,28,26,.93);border:1px solid rgba(122,90,52,.55);border-radius:6px;
+    padding:0;overflow:hidden;
+    font-family:'Segoe UI','Malgun Gothic',sans-serif;font-size:12px;color:#e9ddc0;
+    transform:translateX(calc(100% + 20px));opacity:0;
+    visibility:hidden;pointer-events:none;
+    transition:transform .22s ease, opacity .22s ease, visibility 0s .22s;}
+  #tune.on{transform:none;opacity:1;visibility:visible;pointer-events:auto;
+    transition:transform .22s ease, opacity .22s ease, visibility 0s;}
+  @media (prefers-reduced-motion: reduce){ #tune, #tune.on{transition:none;} }
+  #tune .menu{flex:0 0 auto;display:flex;gap:5px;padding:11px 14px;
+    background:#121c1a;border-bottom:1px solid #3a5450;}
+  /* 스크롤은 여기서만. min-height:0 이 없으면 flex 자식이 줄지 않아 스크롤이 안 생긴다.
+     scrollbar-gutter 로 자리를 늘 잡아 둬야 스크롤바 유무에 따라 내용이 흔들리지 않는다.
+     오른 여백 6 + 스크롤바 8 = 왼쪽 여백 14 와 맞는다. */
+  #tune .body{flex:1 1 auto;min-height:0;overflow-y:auto;scrollbar-gutter:stable;
+    padding:10px 6px 18px 14px;}
+  #tune .body::-webkit-scrollbar{width:8px;}
+  #tune .body::-webkit-scrollbar-thumb{background:#3f5b52;border-radius:4px;}
+  #tune .body::-webkit-scrollbar-track{background:transparent;}
+  #tune .mi{flex:1;text-align:center;padding:6px 0;border-radius:4px;cursor:pointer;
+    font-size:11.5px;color:#8fa39e;background:#1b2b28;border:1px solid #3a5450;
+    user-select:none;}
+  #tune .mi:hover{background:#243733;color:#cdbf9a;}
+  #tune .mi.on{color:#ffe9b8;background:#2c3b38;border-color:#8a6d3f;}
+  #tune .pane{display:none;}
+  #tune .pane.on{display:block;}
+  #tune .empty{color:#7f8f8b;font-size:11.5px;line-height:1.6;padding:14px 0;}
   #tune h4{margin:14px 0 6px;font-size:11px;letter-spacing:1px;color:#9fd6cc;
     border-bottom:1px solid #3a5450;padding-bottom:3px;font-weight:600;}
   #tune h4:first-child{margin-top:0;}
-  #tune .row{margin:7px 0;}
-  #tune .lab{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:2px;}
-  #tune .nm{color:#cdbf9a;}
-  #tune .val{color:#ffd98a;font-family:monospace;font-size:12px;}
-  #tune .def{color:#6f7f7b;font-size:10px;margin-left:5px;}
-  #tune input[type=range]{width:100%;height:16px;accent-color:#b08d57;cursor:pointer;margin:0;}
+  /* 디버그 탭 — 일반 탭과 같은 한 줄형 [라벨][슬라이더][값]
+     폭 배분: 내용폭 260 = 라벨66 + 사이6 + 슬라이더104 + 사이6 + 값78
+     min-width:0 이 없으면 슬라이더가 자기 고유 폭(약 129px) 아래로 안 줄어들어
+     값 칸을 패널 밖으로 밀어낸다. 값을 넓혀도 같은 일이 되풀이된다.
+     기본값은 줄에 적지 않고 title 로 넘긴다. 대신 바뀐 값은 색으로 표시한다 —
+     "무엇을 건드렸는가"가 "기본값이 얼마인가"보다 훨씬 자주 궁금하다. */
+  #tune .row{display:flex;align-items:center;gap:6px;margin:7px 0;}
+  #tune .row>.nm{flex:0 0 66px;color:#cdbf9a;font-size:13px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  #tune .row>input[type=range]{flex:1 1 auto;min-width:0;width:auto;height:16px;
+    accent-color:#b08d57;cursor:pointer;margin:0;}
+  #tune .row>.val{flex:0 0 78px;text-align:right;color:#ffd98a;
+    font-family:var(--numfont);font-size:14px;white-space:nowrap;}
+  #tune .row>.val.ch{color:#9fe0a0;}          /* 기본값에서 바뀐 값 */
   #tune .out{background:#101a19;border:1px solid #3a5450;border-radius:4px;
     padding:8px 10px;margin-top:4px;line-height:1.7;font-size:11.5px;color:#bfd6d0;}
   #tune .out b{color:#ffd98a;font-family:monospace;font-weight:400;}
@@ -63,18 +123,64 @@
     border-radius:4px;padding:7px 0;font-size:11.5px;cursor:pointer;font-family:inherit;}
   #tune button:hover{background:#3a4d49;}
   #tune .note{color:#7f8f8b;font-size:10.5px;margin-top:10px;line-height:1.5;}
+  #tune .chk{display:flex;align-items:center;gap:8px;cursor:pointer;
+    padding:5px 0;color:#cdbf9a;user-select:none;}
+  #tune .chk input{accent-color:#b08d57;width:14px;height:14px;margin:0;cursor:pointer;}
+  #tune .chk:hover{color:#ffe9b8;}
+  /* 디버그 탭의 대상 고르개 */
+  #tune .tgt{display:flex;align-items:center;gap:8px;margin-bottom:4px;}
+  #tune .tgt span{flex:0 0 auto;white-space:nowrap;color:#9fd6cc;font-size:11px;letter-spacing:1px;}
+  #tune .tgt select{flex:1 1 auto;min-width:0;background:#1b2b28;color:#ffe9b8;
+    border:1px solid #5a6e69;border-radius:4px;padding:5px 6px;
+    font-size:11.5px;font-family:inherit;cursor:pointer;}
+  #tune .tgt2{color:#7f8f8b;font-size:10.5px;margin-bottom:6px;}
+  /* 일반 탭 — 한 줄에 [라벨][막대][값]. 두 줄형보다 세로를 4분의 1 아낀다.
+     폭 배분: 내용폭 260 = 라벨66 + 사이8 + 막대108 + 사이8 + 값70
+     라벨 칸은 디버그 탭과 같은 66px — 탭을 오갈 때 왼쪽 줄이 흔들리지 않는다. */
+  #tune .gh{color:#ffe9b8;font-size:15px;margin-bottom:2px;}
+  #tune .gh i{color:#7f8f8b;font-size:11.5px;font-style:normal;}
+  #tune .gr{display:flex;align-items:center;gap:8px;margin:7px 0;}
+  #tune .gr>span:first-child{flex:0 0 66px;color:#cdbf9a;font-size:13px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  #tune .gr .gb{flex:1 1 auto;min-width:0;position:relative;height:6px;
+    background:#2c3b38;border-radius:3px;}
+  #tune .gr .gb i{display:block;height:100%;border-radius:3px;}
+  /* 출항할 때의 자리를 알려주는 눈금 — 지금 값이 얼마나 떨어졌는지 보라고 둔다 */
+  #tune .gr .gb u{position:absolute;top:-2px;width:2px;height:10px;background:#f0e4c4;
+    opacity:.75;text-decoration:none;}
+  #tune .gr>b{flex:0 0 70px;text-align:right;color:#ffd98a;white-space:nowrap;
+    font-family:var(--numfont);font-weight:400;font-size:15px;}
+  #tune .gr>b i{color:#6f7f7b;font-size:11px;font-style:normal;font-family:inherit;}
+  /* 맨 위 띠 — 날짜와 항해일. 스크롤 밖이라 어느 탭에서나 보인다.
+     날짜를 두 배로 키웠다. 그대로 키우면 한 줄에 안 들어가서 두 가지를 함께 했다:
+       - 자간을 0 으로 (20자 넘는 줄에서 자간 0.5px 이 10px 을 먹는다)
+       - 'A.D.' 만 작게 — 값이 아니라 꾸밈말이라 작아도 뜻이 통한다 */
+  #tune .head{flex:0 0 auto;padding:9px 12px 8px;background:#121c1a;
+    border-bottom:1px solid #3a5450;border-radius:5px 5px 0 0;
+    color:#ffe9b8;font-size:12.5px;text-align:center;letter-spacing:0;}
+  #tune .head b{font-family:var(--numfont);font-weight:400;font-size:28px;line-height:1.15;}
+  #tune .head b s{font-size:15px;color:#c9b483;text-decoration:none;
+    margin-right:3px;vertical-align:3px;}
+  #tune .head em{display:block;font-style:normal;font-size:13px;color:#9fb3ac;margin-top:4px;}
+  #tune .head em b{color:#ffd98a;font-size:16px;}
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
-<div id="hud" class="panel"></div>
 <div id="hint" class="panel">
-  <span class="dim"><kbd>W</kbd>/<kbd>S</kbd> 돛 · <kbd>A</kbd>/<kbd>D</kbd> 선회 ·
-  <kbd>휠</kbd> 확대 · <kbd>Alt</kbd>+<kbd>휠</kbd> 미세 · <kbd>L</kbd> 배율고정 · <kbd>P</kbd> 조정패널 ·
-  <kbd>I</kbd> 정보</span>
+  <span class="dim"><kbd>L</kbd> 배율고정 · <kbd>P</kbd> 조정패널 · <kbd>I</kbd> 정보</span>
   <span id="toggles"></span>
 </div>
-<div id="src" class="panel">地圖 Natural Earth 1:50m · 海流 NASA OSCAR<br>風 NCEP/NCAR Reanalysis · 投影 Equirectangular</div>
+<div id="compass">
+  <div class="geo" id="cGeo"></div>
+  <div class="body">
+    <div class="nums">
+      <div class="k">바람</div><div class="v" id="cWind">—</div><div class="u">m/s</div>
+      <div class="k2">해류</div><div class="v2" id="cCur">—</div><div class="u2">kn</div>
+    </div>
+    <canvas id="cCanvas"></canvas>
+  </div>
+</div>
 <div id="tune"></div>
 
 <div id="info">
@@ -292,6 +398,34 @@ const windVec = {x:0,y:0};
 const EPOCH_Y = 1500;                 // 게임 시작 연도
 let gameDay = 0;                      // 누적 게임 일수 (실수)
 const MDAYS=[31,28,31,30,31,30,31,31,30,31,30,31];
+// 요일 — 1500년 1월 1일은 율리우스력으로 수요일이다 (당시 실제로 쓰던 달력).
+// 다만 이 게임의 달력은 365일 고정이라 윤년이 없다. 그래서 해가 갈수록 실제 요일과
+// 4년에 하루꼴로 어긋난다. 분위기용 표기이므로 그대로 둔다.
+// 날짜는 라틴 문자로 적는다 — 당시 해도·항해일지의 표기를 따른 것이고,
+// 덕분에 이 줄은 한글이 섞이지 않아 숫자 글꼴 한 벌로 그려진다.
+const DOW = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+const DOWK = ['일','월','화','수','목','금','토'];
+const MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const MONF = ['January','February','March','April','May','June',
+              'July','August','September','October','November','December'];
+const EPOCH_DOW = 3;                  // Wed
+function dow(){ return DOW[(EPOCH_DOW + Math.floor(gameDay)) % 7]; }
+function dowK(){ return DOWK[(EPOCH_DOW + Math.floor(gameDay)) % 7]; }
+
+// 날짜 표기 방식 — 설정 탭에서 고른다.
+// [키, 이름, 만드는 함수, 글자 크기]
+// 크기가 제각각인 이유: 표기마다 길이가 달라서 한 크기로는 긴 것이 잘린다.
+//   'A.D.' 는 값이 아니라 꾸밈말이라 <s> 로 감싸 작게 뽑는다.
+//   표기가 무엇이든 숫자는 게임 표준(--numfont)을 따른다. 한글은 그 글꼴 목록 뒤쪽이 맡는다.
+const AD = '<s>A.D.</s>';
+const DATEFMT = [
+  ['head', '기본식', c => AD+c.y+' '+MON[c.m]+' '+c.d+' '+c.w,             28],
+  ['log',  '항해식', c => c.d+' '+MONF[c.m]+' '+AD+c.y,                    25],
+  ['uk',   '영국식', c => c.w+', '+c.d+' '+MON[c.m]+' '+AD+c.y,            26],
+  ['us',   '미국식', c => c.w+', '+MON[c.m]+' '+c.d+', '+AD+c.y,           26],
+  ['ko',   '한글식', c => '서기 '+c.y+'년 '+(c.m+1)+'월 '+c.d+'일 ('+c.k+')', 20],
+  ['kod',  '한글식', c => '서기 '+c.y+'년 '+(c.m+1)+'월 '+c.d+'일',           21]
+];
 function calendar(){
   const d = gameDay % 365, yr = EPOCH_Y + Math.floor(gameDay/365);
   let m=0, r=d;
@@ -307,7 +441,7 @@ function monthF(){                    // 월 위치를 실수로 (보간용, 15�
 }
 // 돛의 극곡선 — 뱃머리와 바람이 이루는 각(0=정면)에 따른 추진 효율
 function polar(deg){
-  const nogo = P.nogoDeg;
+  const nogo = SHIP.spec.nogoDeg;
   if(deg <= nogo) return 0;                       // 역풍 사각 — 나아가지 못함
   const T = [[nogo,0],[nogo+15,0.55],[90,1.0],[135,0.92],[180,0.68]];
   for(let i=0;i<T.length-1;i++){
@@ -327,6 +461,18 @@ function windPower(ms){
 
 // ===== 캔버스 =====
 const cv = document.getElementById('c'); const ctx = cv.getContext('2d');
+// 나침반 카드 안의 전용 캔버스. resize() 가 이 아래에서 바로 불리므로 여기서 잡아 둔다
+// (const 는 끌어올려지지 않아, 뒤에서 선언하면 resize() 가 접근하는 순간 죽는다).
+// 안쪽 그림은 기준 반지름 34 로 그리고 배율만 건다. 바깥 원(R0+PAD)이 캔버스에 꽉 찬다.
+const cvC = document.getElementById('cCanvas'); const ctxC = cvC.getContext('2d');
+const COMPASS_R0 = 34;                  // 그리는 기준 (건드리지 않는다)
+const COMPASS_PAD = 18;                 // 금색 원 바깥 띠 — 방위 글자 자리
+const COMPASS_SIZE = 172;               // 카드 안 캔버스 한 변 (CSS px, CSS 와 짝)
+const COMPASS_S = (COMPASS_SIZE/2) / (COMPASS_R0 + COMPASS_PAD);   // 배율
+function resizeCompass(){               // 고해상도 대응 — resize() 에서 함께 부른다
+  const d = Math.min(window.devicePixelRatio||1, 2);
+  cvC.width = COMPASS_SIZE*d; cvC.height = COMPASS_SIZE*d;
+}
 let W=0,H=0,DPR=1;
 function resize(){
   DPR = Math.min(window.devicePixelRatio||1, 2);
@@ -336,6 +482,7 @@ function resize(){
   ZMIN = W / WORLD_W;
   if(typeof targetZoom==='number' && targetZoom<ZMIN) targetZoom=ZMIN;
   if(typeof zoom==='number' && zoom<ZMIN) zoom=ZMIN;
+  if(typeof resizeCompass==='function') resizeCompass();   // 나침반 캔버스도 함께
 }
 window.addEventListener('resize', resize);
 
@@ -353,17 +500,25 @@ let zoomLock = false;                  // [테스트] L 키 — 배율 고정 �
 resize();                              // 최초 호출: ZMIN 계산 + 초기 배율 클램프
 const ship = (()=>{ const [x,y]=project(-24, 31);
   return {x,y,vx:0,vy:0,head:-Math.PI/2, speed:0, sail:0}; })(); // 대서양, 초기 침로 북
+// ===== 배 =====
+// spec  = 배가 가진 능력. 배를 바꾸면 통째로 갈아 끼운다.
+// state = 항해하며 변하는 상태.  cargo = 물자. 둘 다 저장 대상이다.
+// 능력치를 P 에서 떼어낸 이유: P 는 '세계'를 조절하는 값이고 이건 '배'의 값이다.
+const SHIPS = {
+  player: { key:'player', label:'플레이어의 배', name:'카라벨', rig:'라틴',
+    spec : { speedKn:8, sailMax:4, turnDeg:66, turnIdle:0.12, accUp:3.4, accDn:1.8,
+             nogoDeg:45, draft:2.5, sight:20, hullMax:200, crewMax:40, holdMax:60 },
+    state: { hull:200, crew:32, morale:90 },
+    cargo: { water:40, food:40, timber:20, shot:60 } }
+};
+const SHIP0 = JSON.parse(JSON.stringify(SHIPS));   // 초기값 보존 — 되돌리기용
+let SHIP = SHIPS.player;                           // 지금 조작 중인 배
+
 // ===== [테스트] 조정 가능 파라미터 — P 키 패널에서 실시간 변경 =====
 // 값이 확정되면 여기의 기본값을 고치고 패널을 제거한다.
+// 여기 남은 것은 전부 '세계' 값이다. 배에 딸린 값은 SHIP.spec 으로 갔다.
 const P = {
-  speedKn   : 8,      // 전속(돛 4/4) 노트
   hoursPerSec: 24,    // 시계: 게임 1초 = 실제 N시간 (24 = 1일/초)
-  turnDeg   : 66,     // 전속 선회율 (도/초)  ← 원래 1.15 rad/s
-  accUp     : 3.4,    // 정지→전속 도달 시간(실시간 초)
-  accDn     : 1.8,    // 전속→정지
-  turnIdle  : 0.12,   // 정지 시 선회율 배수
-  boost     : 1.25,   // (미사용) 구 Shift 순풍 — 바람으로 대체됨
-  nogoDeg   : 45,     // 역풍 사각: 뱃머리 기준 이 각도 안쪽은 나아가지 못함
   windMin   : 0.5,    // 이 풍속(m/s) 이하는 무풍 — 배가 멈춤
   windFull  : 9.0,    // 이 풍속 이상이면 돛이 최대 추진력
                       //  (6.0 으로 낮추면 바다 대부분이 100%가 되어 무풍대가 사라진다)
@@ -371,7 +526,6 @@ const P = {
   // (전 지구 중앙값 2.78 m/s / 실제 해상 평균은 7 m/s 안팎)
   // 이 배수로 그 축소분을 보정한다. 방향은 그대로, 크기만 키운다.
   windGain  : 1.8,
-  sailMax   : 4,      // 돛 단수
   shipScale : 1.15,   // 선체 크기 (1.15 ≈ 33 화면px)
   curGain   : 1.0     // 해류 배율 (1.0 = 실측 그대로)
 };
@@ -379,17 +533,25 @@ const P0 = Object.assign({}, P);   // 초기값 보존 — 되돌리기용
 // 파생값 — syncDerived() 로 갱신
 let SPEED, SAIL_MAX, ACC_UP, ACC_DN, TURN_FULL, TURN_IDLE, TIMEK;
 function syncDerived(){
-  SPEED     = P.speedKn * KN_TO_PX;      // 월드px / 게임일
-  SAIL_MAX  = P.sailMax;
-  ACC_UP    = SPEED / P.accUp;
-  ACC_DN    = SPEED / P.accDn;
-  TURN_FULL = P.turnDeg * Math.PI/180;
-  TURN_IDLE = P.turnIdle;
+  const s = SHIP.spec;
+  SPEED     = s.speedKn * KN_TO_PX;      // 월드px / 게임일
+  SAIL_MAX  = s.sailMax;
+  ACC_UP    = SPEED / s.accUp;
+  ACC_DN    = SPEED / s.accDn;
+  TURN_FULL = s.turnDeg * Math.PI/180;
+  TURN_IDLE = s.turnIdle;
   TIMEK     = P.hoursPerSec / 24;        // 시계 배속 (1.0 = 1일/초)
   if(ship && ship.sail > SAIL_MAX) ship.sail = SAIL_MAX;
 }
 syncDerived();
 const wake = [];
+// 스페이스바 정지. 그리기는 계속 돌린다 — 멈춘 화면을 들여다보는 것이 목적이므로
+// 배율 조작·패널 조작은 그대로 되어야 한다. 시간만 세우는 것이다.
+let paused = false;
+// 항해일은 '항구를 떠난 날'부터 센다. 항구가 아직 없으므로 시작 시점이 곧 출항이다.
+// 항구가 생기면 출항할 때 여기에 gameDay 를 넣으면 된다.
+let voyageStartDay = 0;
+function departPort(){ voyageStartDay = gameDay; }   // 출항 — 항구가 생기면 호출한다
 
 // ===== 입력 =====
 const keys = {};
@@ -412,9 +574,9 @@ addEventListener('keydown',e=>{
   if(k==='i'){ const p=document.getElementById('info'); p.style.display = p.style.display==='flex'?'none':'flex'; }
   if(k==='l'){ zoomLock=!zoomLock; if(zoomLock) targetZoom=zoom; }   // [테스트] 배율 고정
   if(k==='p'){ const t=document.getElementById('tune');               // [테스트] 조정 패널
-               const open = t.style.display!=='block';
-               t.style.display = open?'block':'none';
-               document.body.classList.toggle('tune-open', open); }   // 출처 표시도 함께 비켜남
+               t.classList.toggle('on');                              // 여닫기는 class 로 (전환용)
+             }
+  if(k===' ' && !e.repeat){ paused = !paused; updateHint(); }         // 정지 / 재개
   if(!zoomLock){
     if(k==='+'||k==='=') targetZoom=Math.min(ZMAX,targetZoom*1.18);
     if(k==='-'||k==='_') targetZoom=Math.max(ZMIN,targetZoom/1.18);
@@ -435,9 +597,11 @@ const show = {grat:true, rhumb:true, coll:false, cur:true, wind:true};
 const TOGGLES = [['b','바람','wind'], ['k','해류','cur'], ['g','경위선','grat'],
                  ['h','나침선','rhumb'], ['c','충돌영역','coll']];
 function updateHint(){
-  document.getElementById('toggles').innerHTML = ' · ' + TOGGLES.map(([k,label,f])=>
-    '<span class="'+(show[f]?'on':'off')+'"><kbd>'+k.toUpperCase()+'</kbd> '+label+'</span>'
-  ).join(' · ');
+  document.getElementById('toggles').innerHTML =
+    ' · <span class="'+(paused?'on':'off')+'"><kbd>Space</kbd> 정지</span> · ' +
+    TOGGLES.map(([k,label,f])=>
+      '<span class="'+(show[f]?'on':'off')+'"><kbd>'+k.toUpperCase()+'</kbd> '+label+'</span>'
+    ).join(' · ');
 }
 updateHint();                              // 최초 1회
 
@@ -518,10 +682,29 @@ const CURVIZ = (function(){
 })();
 
 // ===== 업데이트 =====
+// 물·식량 소비와 그에 따른 컨디션·승무원 변화.
+// 굶주림을 승무원 감소로 바로 잇지 않고 컨디션을 한 단계 둔다 —
+// 플레이어가 알아채고 손 쓸 여유를 주기 위해서다.
+const RATION_PER30 = 1;      // 승무원 30명당 하루 물 1통 · 식량 1통
+function consume(days){
+  if(days <= 0) return;
+  const st = SHIP.state, cg = SHIP.cargo;
+  if(st.crew <= 0) return;
+  const need = st.crew / 30 * RATION_PER30 * days;
+  const gotW = Math.min(cg.water, need), gotF = Math.min(cg.food, need);
+  cg.water -= gotW; cg.food -= gotF;
+  // 모자란 비율이 클수록 컨디션이 빨리 깎인다 (하루 최대 12)
+  const lack = need > 0 ? Math.max(0, 1 - Math.min(gotW,gotF)/need) : 0;
+  if(lack > 0) st.morale = Math.max(0, st.morale - 12*lack*days);
+  else         st.morale = Math.min(100, st.morale + 1.5*days);   // 보급되면 서서히 회복
+  // 컨디션이 바닥나면 그때부터 승무원이 준다 (하루 최대 2명)
+  if(st.morale <= 0) st.crew = Math.max(0, st.crew - 2*days);
+}
 let last=performance.now(), wakeT=0, tuneT=0;
 function update(dt){
   zoom += (targetZoom-zoom)*Math.min(1,dt*10);
   gameDay += dt * TIMEK;                     // 달력 진행 (시계 배속 반영)
+  consume(dt * TIMEK);                       // 물·식량 소비는 게임일 기준
 
   // === 바람 샘플 → 돛의 추진 효율 ===
   windVec.x=0; windVec.y=0;
@@ -727,66 +910,96 @@ function drawShip(){
   ctx.restore();
 }
 
-const TUNE_W = 290;                      // #tune 패널 폭 (CSS와 일치시킬 것)
-function tuneOpen(){
-  return document.getElementById('tune').style.display === 'block';
-}
-// 나침반 위치는 여기 한 곳에서만 정한다.
-// 조정 패널(HTML)은 캔버스 위에 그려지므로 열리면 그 폭만큼 왼쪽으로 비켜나고,
-// 그러면 좁은 화면에서는 하단 안내줄과 겹치므로 위로도 함께 올린다.
-function compassPos(){
-  const open = tuneOpen();
-  return { cx: W - 58 - (open ? TUNE_W : 0),
-           cy: H - (open ? 150 : 80), R: 34 };
-}
+// ===== 나침반 — 카드 안의 전용 캔버스에 그린다 =====
+// 카드(#compass)는 HTML 이라 조정 패널과 같은 CSS 규칙을 그대로 쓴다.
+// 그래서 화면 어디에 놓을지 계산하는 코드가 필요 없다 — 중심은 늘 캔버스 한가운데다.
+// 캔버스·상수·resizeCompass() 는 resize() 보다 앞에 있어야 해서 위쪽 캔버스 절에 있다.
+let cWindTxt = '', cCurTxt = '', cGeoTxt = '';   // 값이 바뀔 때만 DOM 을 건드린다
+// 위도·경도 표기. 부호 대신 N/S·E/W 를 붙인다 (해도 관례)
+function geo(v, pos, neg){ return Math.abs(v).toFixed(1)+'°'+(v>=0?pos:neg); }
+
 function compass(){
-  screenTransform();
-  const {cx, cy, R} = compassPos();
-  ctx.save();
-  ctx.fillStyle='rgba(30,44,41,.55)'; ctx.beginPath(); ctx.arc(cx,cy,R+8,0,7); ctx.fill();
-  ctx.strokeStyle='#c9b483'; ctx.lineWidth=1.5; ctx.beginPath(); ctx.arc(cx,cy,R,0,7); ctx.stroke();
+  const R0 = COMPASS_R0, g = ctxC;
+  const d = Math.min(window.devicePixelRatio||1, 2);
+  g.setTransform(d,0,0,d,0,0);
+  g.clearRect(0,0,COMPASS_SIZE,COMPASS_SIZE);
+  g.save();
+  g.translate(COMPASS_SIZE/2, COMPASS_SIZE/2);
+  g.scale(COMPASS_S, COMPASS_S);        // 여기부터는 중심이 0,0
+  g.fillStyle='#223a36'; g.beginPath(); g.arc(0,0,R0+COMPASS_PAD,0,7); g.fill();
+  g.strokeStyle='#c9b483'; g.lineWidth=1.5; g.beginPath(); g.arc(0,0,R0,0,7); g.stroke();
   // 8방위 별
   for(let i=0;i<8;i++){ const a=i*Math.PI/4;
-    ctx.fillStyle = i%2? 'rgba(201,180,131,.5)':'#e7d6a6';
-    ctx.beginPath(); ctx.moveTo(cx+Math.cos(a)*R, cy+Math.sin(a)*R);
-    ctx.lineTo(cx+Math.cos(a+Math.PI/8)*6, cy+Math.sin(a+Math.PI/8)*6);
-    ctx.lineTo(cx+Math.cos(a-Math.PI/8)*6, cy+Math.sin(a-Math.PI/8)*6);
-    ctx.closePath(); ctx.fill(); }
+    g.fillStyle = i%2? 'rgba(201,180,131,.5)':'#e7d6a6';
+    g.beginPath(); g.moveTo(Math.cos(a)*R0, Math.sin(a)*R0);
+    g.lineTo(Math.cos(a+Math.PI/8)*6, Math.sin(a+Math.PI/8)*6);
+    g.lineTo(Math.cos(a-Math.PI/8)*6, Math.sin(a-Math.PI/8)*6);
+    g.closePath(); g.fill(); }
 
   // --- 역풍 사각 부채꼴 (바람이 불어오는 쪽 ±nogo) ---
+  let wFrom = null;
   if(WIND && ship.windMs > P.windMin){
-    const wFrom = Math.atan2(-windVec.y, -windVec.x);   // 바람이 불어오는 방향
-    const n = P.nogoDeg*Math.PI/180;
-    ctx.fillStyle='rgba(200,60,40,.16)';
-    ctx.beginPath(); ctx.moveTo(cx,cy);
-    ctx.arc(cx,cy,R-2, wFrom-n, wFrom+n); ctx.closePath(); ctx.fill();
-    // 바람 바늘 — 불어오는 쪽에서 중심으로 (길이 = 세기)
-    const pw = Math.min(1, ship.windMs/12);
-    const len = (R-4)*(0.45+0.55*pw);
-    ctx.save(); ctx.translate(cx,cy); ctx.rotate(wFrom);
-    ctx.strokeStyle='#8fd3e8'; ctx.lineWidth=2.2; ctx.lineCap='round';
-    ctx.beginPath(); ctx.moveTo(len,0); ctx.lineTo(6,0); ctx.stroke();
-    ctx.fillStyle='#8fd3e8'; ctx.beginPath();          // 안쪽을 향한 화살촉
-    ctx.moveTo(4,0); ctx.lineTo(12,4.5); ctx.lineTo(12,-4.5); ctx.closePath(); ctx.fill();
-    ctx.restore();
+    wFrom = Math.atan2(-windVec.y, -windVec.x);        // 바람이 불어오는 방향
+    const n = SHIP.spec.nogoDeg*Math.PI/180;
+    g.fillStyle='rgba(200,60,40,.16)';
+    g.beginPath(); g.moveTo(0,0);
+    g.arc(0,0,R0-2, wFrom-n, wFrom+n); g.closePath(); g.fill();
   }
-  // --- 해류 바늘 (가늘게, 흘러가는 쪽) ---
+  // --- 바람·해류 바늘 — 시계바늘처럼 중심에서 뻗는 직사각형 ---
+  // 길이는 고정이다. 세기는 카드 왼쪽 숫자로 읽는다.
+  // 해류를 나중에, 더 얇게 그려 바람 위에 얹는다 — 방향이 겹쳐도 둘 다 읽힌다.
+  // 끝을 뾰족하게 깎지 않는 이유: 겹칠 때 폭 차이가 사라져 둘을 구분할 수 없게 된다.
+  // 안쪽 끝은 가운데 속력 원판(DISC_R) 바깥에서 시작한다 — 숫자를 가리면 안 된다.
+  const DISC_R = 16.5, HAND_IN = 18.5, HAND_OUT = 31;
   const cs = Math.hypot(curVec.x, curVec.y);
-  if(cs*PX_TO_KN > 0.05){
-    const ca = Math.atan2(curVec.y, curVec.x);
-    const cl = (R-8)*Math.min(1, cs*PX_TO_KN/1.2);
-    ctx.save(); ctx.translate(cx,cy); ctx.rotate(ca);
-    ctx.strokeStyle='rgba(120,200,180,.85)'; ctx.lineWidth=1.2;
-    ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(Math.max(8,cl),0); ctx.stroke();
-    ctx.restore();
+  if(wFrom !== null){                                   // 바람 — 굵게
+    g.save(); g.rotate(wFrom);
+    g.fillStyle='#8fd3e8'; g.fillRect(HAND_IN, -3.0, HAND_OUT-HAND_IN, 6.0);
+    g.restore();
   }
-  // --- 뱃머리 바늘 ---
-  ctx.save(); ctx.translate(cx,cy); ctx.rotate(ship.head);
-  ctx.fillStyle='#c0392b'; ctx.beginPath();
-  ctx.moveTo(R-4,0); ctx.lineTo(-6,4); ctx.lineTo(-6,-4); ctx.closePath(); ctx.fill();
-  ctx.restore();
-  ctx.fillStyle='#f2e6bf'; ctx.font='11px Georgia'; ctx.textAlign='center'; ctx.textBaseline='middle';
-  ctx.fillText('N',cx,cy-R-0); ctx.restore();
+  if(cs > 1e-9){                                        // 해류 — 얇게, 바람 위에
+    g.save(); g.rotate(Math.atan2(curVec.y, curVec.x));
+    g.fillStyle='#c0392b'; g.fillRect(HAND_IN, -1.35, HAND_OUT-HAND_IN, 2.7);
+    g.restore();
+  }
+  // --- 가운데 원판 + 대지속력 ---
+  // 대지속력 = 배 자신의 속도에 해류를 더한 것. 실제로 땅에 대해 나아가는 속도다.
+  // 단위(kn)를 함께 적는다 — 화면에 m/s 와 kn 이 섞여 있어 숫자만 두면 헷갈린다.
+  g.fillStyle='#1b2b28'; g.strokeStyle='#3d5a51'; g.lineWidth=0.6;
+  g.beginPath(); g.arc(0,0,DISC_R,0,7); g.fill(); g.stroke();
+  const gs = Math.hypot(ship.vx + curVec.x, ship.vy + curVec.y) * PX_TO_KN;
+  g.textAlign='center'; g.textBaseline='middle';
+  g.font='13.3px Georgia'; g.fillStyle='#ffe9b8'; g.fillText(gs.toFixed(1), 0, -2.4);
+  g.font='6.7px Georgia';  g.fillStyle='#9db3ac'; g.fillText('kn', 0, 8.5);
+  // --- 침로 표식 — 금색 원 위를 도는 붉은 점 ---
+  // 중심에서 뻗는 바늘이 아니라 테두리 위의 자리로 나타낸다.
+  // 바늘을 두면 바람·해류와 중심에서 만나 겹치고, 방향은 어차피 점 하나로 충분하다.
+  g.save(); g.rotate(ship.head);
+  g.fillStyle='#c0392b'; g.strokeStyle='#f4dbd6'; g.lineWidth=0.9;
+  g.beginPath(); g.arc(R0,0,3.9,0,7); g.fill(); g.stroke();
+  g.restore();
+  // --- 방위 글자 — 금색 원 바깥 띠 한가운데. 별 끝(R0)과 겹치지 않는다 ---
+  // 북만 밝게. 나머지는 눈이 먼저 북을 찾도록 한 단계 낮춘다.
+  const LR = R0 + COMPASS_PAD/2;
+  g.textAlign='center'; g.textBaseline='middle';
+  g.font='11px Georgia'; g.fillStyle='#f2e6bf'; g.fillText('N', 0, -LR);
+  g.font='10px Georgia'; g.fillStyle='#b6a988';
+  g.fillText('S',  0,  LR);
+  g.fillText('E',  LR, 0);
+  g.fillText('W', -LR, 0);
+  g.restore();
+
+  // --- 세기 숫자는 카드의 HTML 이 맡는다 (글꼴이 다른 UI 와 같아진다) ---
+  // 단위는 HTML 에 고정으로 적혀 있다. 여기서는 값만 넣는다.
+  const wTxt = (ship.windMs||0).toFixed(1);
+  const cTxt = (cs*PX_TO_KN).toFixed(2);
+  if(wTxt !== cWindTxt){ cWindTxt = wTxt; document.getElementById('cWind').textContent = wTxt; }
+  if(cTxt !== cCurTxt ){ cCurTxt  = cTxt; document.getElementById('cCur' ).textContent = cTxt; }
+  // --- 맨 위 띠 = 위도·경도 ---
+  const lon = wrapX(ship.x)/WORLD_W*360-180;
+  const lat = 90 - ship.y/WORLD_H*180;
+  const gTxt = '<s>위도</s><b>'+geo(lat,'N','S')+'</b> &nbsp; <s>경도</s><b>'+geo(lon,'E','W')+'</b>';
+  if(gTxt !== cGeoTxt){ cGeoTxt = gTxt; document.getElementById('cGeo').innerHTML = gTxt; }
 }
 
 // ===== 바람 화살표 (화면 격자에 성기게) — B 로 토글 =====
@@ -838,150 +1051,259 @@ function frameVignette(){
   ctx.strokeStyle='#8a6a3d'; ctx.lineWidth=1.5; ctx.strokeRect(15,15,W-30,H-30);
 }
 
-const DIRS=['N','NE','E','SE','S','SW','W','NW'];
-function fmt(v,pos,neg){ const h=v>=0?pos:neg; return Math.abs(v).toFixed(1)+'°'+h; }
-function drawHUD(){
-  const lon = wrapX(ship.x)/WORLD_W*360-180;
-  const lat = 90 - ship.y/WORLD_H*180;
-  const sp = Math.hypot(ship.vx+curVec.x, ship.vy+curVec.y);   // 대지속력(해류 포함)
-  const hd = (ship.head*180/Math.PI+90+360)%360;   // 0=N 기준 표시
-  const dir = DIRS[Math.round(hd/45)%8];
-  const sail = '▮'.repeat(ship.sail) + '▯'.repeat(SAIL_MAX-ship.sail);
-  const grounded = ship.grounded;
-  // 해류 표시 (유향 = 흘러가는 방향)
-  const cs = Math.hypot(curVec.x,curVec.y);
-  let curTxt;
-  if(!CUR) curTxt = '<span style="color:#c9a">해류 데이터 없음</span>';
-  else if(cs*PX_TO_KN < 0.05) curTxt = '해류 <span class="v">잔잔</span>';
-  else {
-    const cb=(Math.atan2(curVec.x,-curVec.y)*180/Math.PI+360)%360;
-    curTxt = '해류 <span class="v">'+(cs*PX_TO_KN).toFixed(2)+' kn '+DIRS[Math.round(cb/45)%8]+'쪽으로</span>';
-  }
-  // 바람 표시 — 풍향은 '불어오는' 방향(기상 관례), 효율은 극곡선 결과
-  let windTxt;
-  if(!WIND) windTxt = '<span style="color:#c9a">바람 데이터 없음</span>';
-  else {
-    const wb=(Math.atan2(-windVec.x, windVec.y)*180/Math.PI+360)%360;
-    const eff = Math.round((ship.sailEff||0)*100);
-    const state = (ship.windMs<P.windMin) ? '<span style="color:#ff9a76">무풍</span>'
-                : (eff===0 ? '<span style="color:#ff9a76">역풍 — 나아갈 수 없다</span>'
-                : '돛 효율 <span class="v">'+eff+'%</span>');
-    windTxt = '바람 <span class="v">'+DIRS[Math.round(wb/45)%8]+'풍 '+
-              (ship.windMs||0).toFixed(1)+' m/s</span>  '+state;
-  }
-  const cal = calendar();
-  const dateTxt = cal.y+'년 '+(cal.m+1)+'월 '+cal.d+'일 · 항해 '+Math.floor(gameDay)+'일차';
-  // 추진력 내역 — 어느 항이 0인지 한눈에 보이게 (곱셈 사슬)
-  const fSail = ship.sail/SAIL_MAX;
-  const fAng  = WIND ? polar(ship.offWind||0) : 1;
-  const fPow  = WIND ? windPower(ship.windMs||0) : 1;
-  const own   = ship.speed*PX_TO_KN;                    // 배 자체 추진 (해류 제외)
-  const z = v=>v<0.005 ? '<span style="color:#ff9a76">0%</span>'
-                       : '<span class="v">'+Math.round(v*100)+'%</span>';
-  const chain =
-    '추진 '+P.speedKn.toFixed(1)+'kn × 돛'+z(fSail)+' × 각도'+z(fAng)+' × 풍력'+z(fPow)+
-    ' = <span class="v">'+own.toFixed(2)+' kn</span>';
-  const shipKm  = shipLenPx()/zoom*KM_PER_PX;      // 배 1척이 나타내는 실거리
-  const viewKm  = W/zoom*KM_PER_PX;                // 화면 폭이 담는 실거리
-  const crossD  = (W/zoom)/SPEED;                  // 화면 횡단 — 게임 내 일수 (전속)
-  const warn    = zoom>ZDATA_LIMIT
-      ? ' <span style="color:#ff9a76">⚠ 해안선 한계(×'+ZDATA_LIMIT+') 초과</span>' : '';
-  const lockTxt = zoomLock ? ' <span style="color:#9fe0a0">[고정]</span>' : '';
-  const ratio =
-    '<span style="color:#9fd6cc">── 비율 계기(테스트) ──</span><br>'+
-    '배 1척 <span class="v">'+(shipKm<10?shipKm.toFixed(2):shipKm.toFixed(1))+' km</span>'+
-    '  화면폭 <span class="v">'+(viewKm<100?viewKm.toFixed(0):Math.round(viewKm/10)*10)+' km</span><br>'+
-    '횡단 <span class="v">'+crossD.toFixed(1)+'일</span>(전속)'+
-    '  배율 <span class="v">×'+zoom.toFixed(2)+'</span>'+lockTxt+warn;
-
-  document.getElementById('hud').innerHTML =
-    '<b>'+dateTxt+'</b><br>'+
-    '위도 <span class="v">'+fmt(lat,'N','S')+'</span>  경도 <span class="v">'+fmt(lon,'E','W')+'</span><br>'+
-    '침로 <span class="v">'+hd.toFixed(0)+'° '+dir+'</span>  돛 <span class="v">'+sail+'</span>  대지속력 <span class="v">'+(sp*PX_TO_KN).toFixed(1)+' kn</span><br>'+
-    chain+'<br>'+
-    windTxt+'<br>'+
-    curTxt+
-    (grounded?'<br><span style="color:#ff9a76">⚓ 좌초 — 돛을 내렸다. A/D로 뱃머리를 돌리시오</span>':'')+
-    '<br><br>'+ratio;
-}
-
 // ===================================================================
 // [테스트] 조정 패널 — P 키. 값이 확정되면 이 블록 전체를 제거한다.
 // ===================================================================
 const TUNE = (function(){
-  const LS = 'aod_tune_v2';   // 파라미터 구성이 바뀌면 올린다 (옛 저장값 무효화)
+  const LS = 'aod_tune_v3';   // 파라미터 구성이 바뀌면 올린다 (옛 저장값 무효화)
   // [키, 라벨, 최소, 최대, 간격, 단위, 소수자리]
-  const SPEC = [
-    ['@배 성능'],
-    ['speedKn',   '전속',        2,   20,  0.1, 'kn',   1],
-    ['sailMax',   '돛 단수',     1,    6,  1,   '단',   0],
+  // 키 앞의 표시가 어디에 저장할지를 정한다:
+  //   s: 배 능력치   t: 배 상태   c: 물자   *: 특수(zoom)   없으면 세계값 P
+  // 상태·물자의 상한은 정원과 묶지 않는다. 정원을 줄이는 순간 현재값이 잘리면
+  // 시험하기 불편하고, 정원 초과 자체도 시험해 봐야 할 상황이다.
+  const SHIP_SPEC = [
+    ['@능력치'],
+    ['s:speedKn',  '추진력',      2,   30,  0.1, 'kn',   1],
+    ['s:sailMax',  '돛 단수',     1,    6,  1,   '단',   0],
+    ['s:turnDeg',  '선회력',      3,  120,  1,   '°/초', 0],
+    ['s:nogoDeg',  '역풍 사각',   0,   80,  1,   '°',    0],
+    ['s:draft',    '흘수',        0.5,  8,  0.1, 'm',    1],
+    ['s:sight',    '감시범위',    2,   80,  1,   'km',   0],
+    ['s:turnIdle', '정지 선회',   0,    1,  0.01,'배',   2],
+    ['s:accUp',    '가속',        0.5, 20,  0.1, '초',   1],
+    ['s:accDn',    '감속',        0.5, 20,  0.1, '초',   1],
+    ['@정원'],
+    ['s:hullMax',  '내구도',      20, 999,  1,   '',     0],
+    ['s:crewMax',  '승무원',       1, 300,  1,   '명',   0],
+    ['s:holdMax',  '적재량',       5, 999,  1,   't',    0],
+    ['@상태'],
+    ['t:hull',     '내구도',       0, 999,  1,   '',     0],
+    ['t:crew',     '승무원',       0, 300,  1,   '명',   0],
+    ['t:morale',   '컨디션',       0, 100,  1,   '',     0],
+    ['@물자'],
+    ['c:water',    '물',           0, 999,  1,   '통',   0],
+    ['c:food',     '식량',         0, 999,  1,   '통',   0],
+    ['c:timber',   '자재',         0, 999,  1,   '개',   0],
+    ['c:shot',     '포탄',         0, 999,  1,   '발',   0]
+  ];
+  const WORLD_SPEC = [
     ['@바람'],
     ['windGain',  '풍속 보정',   0.5,  4,  0.1, '배',   1],
-    ['nogoDeg',   '역풍 사각',   0,   80,  1,   '°',    0],
     ['windMin',   '무풍 기준',   0,    6,  0.1, 'm/s',  1],
     ['windFull',  '최대 추진',   2,   20,  0.5, 'm/s',  1],
-    ['@조작감'],
-    ['turnDeg',   '선회율',      3,  120,  1,   '°/초', 0],
-    ['turnIdle',  '정지 선회',   0,    1,  0.01,'배',   2],
-    ['accUp',     '가속(→전속)', 0.5, 20,  0.1, '초',   1],
-    ['accDn',     '감속(→정지)', 0.5, 20,  0.1, '초',   1],
     ['@세계'],
-    ['hoursPerSec','시계 1초 =', 0.5,  48, 0.5, '시간', 1],
+    ['hoursPerSec','시계',        0.5,  48, 0.5, '시간', 1],
     ['curGain',   '해류 세기',   0,    5,  0.1, '배',   1],
     ['@화면'],
     ['*zoom',     '지도 배율',   0.3, 100, 0.1, '×',    2],
     ['shipScale', '배 크기',     0.3,   5, 0.05,'',     2]
   ];
+  const SPEC = SHIP_SPEC.concat(WORLD_SPEC);
+  const GRP = { s:'spec', t:'state', c:'cargo' };
+  const idOf = k => k.replace(/[*:]/g, '_');          // 키를 DOM id 로
+  function pget(key){
+    if(key === '*zoom') return zoom;
+    const i = key.indexOf(':');
+    return i < 0 ? P[key] : SHIP[GRP[key[0]]][key.slice(i+1)];
+  }
+  function pset(key, v){
+    if(key === '*zoom'){ targetZoom = Math.max(ZMIN, Math.min(ZMAX, v)); return; }
+    const i = key.indexOf(':');
+    if(i < 0) P[key] = v; else SHIP[GRP[key[0]]][key.slice(i+1)] = v;
+    syncDerived();
+  }
+  function pdef(key){                                  // 괄호 안 기본값
+    if(key === '*zoom') return '—';
+    const i = key.indexOf(':');
+    return i < 0 ? P0[key] : SHIP0[SHIP.key][GRP[key[0]]][key.slice(i+1)];
+  }
   const el = document.getElementById('tune');
   const inputs = {}, vals = {};
 
+  // 메뉴 — 일반·설정은 아직 비어 있다. 지금 내용은 전부 제작용이라 디버그로 들어간다.
+  const TABS = [['gen','일반'], ['set','설정'], ['dbg','디버그']];
+  const LS_TAB = 'aod_tune_tab';
+  const LS_HINT = 'aod_hint';           // 화면 아래 안내줄을 켜 두는가
+  const LS_DATE = 'aod_datefmt';        // 날짜 표기 방식
+  let tab = 'dbg';
+  let dateFmt = 'head';                 // 기본
+  try{ const s = localStorage.getItem(LS_DATE);
+       if(DATEFMT.some(x=>x[0]===s)) dateFmt = s; }catch(e){}
+  // 안내줄은 통째로 켜고 끈다. 켜짐/꺼짐을 정하는 통로를 여기 하나로 둔다.
+  function applyHint(on){
+    document.getElementById('hint').classList.toggle('hidden', !on);
+    try{ localStorage.setItem(LS_HINT, on ? '1' : '0'); }catch(e){}
+  }
+  function showTab(t){
+    tab = t;
+    for(const [id] of TABS){
+      document.getElementById('mi_'+id).classList.toggle('on', id===t);
+      document.getElementById('pane_'+id).classList.toggle('on', id===t);
+    }
+    try{ localStorage.setItem(LS_TAB, t); }catch(e){}
+    const b = el.querySelector('.body');    // 스크롤은 카드가 아니라 .body 가 갖는다
+    if(b) b.scrollTop = 0;
+  }
+
   function build(){
-    let h = '';
+    let h = '<div class="head" id="tHead"></div><div class="menu">';
+    for(const [id,lab] of TABS)
+      h += '<span class="mi" id="mi_'+id+'" data-t="'+id+'">'+lab+'</span>';
+    h += '</div><div class="body">'+
+         '<div class="pane" id="pane_gen"></div>'+
+         '<div class="pane" id="pane_set"><h4>화면</h4>'+
+         '<label class="chk"><input type="checkbox" id="cHint">'+
+         '<span>화면 아래 안내줄</span></label>'+
+         // 이름 뒤에 보기가 붙는다 — 무엇인지와 어떻게 보이는지를 한 줄에서 알 수 있다.
+         // </s> 를 빈칸으로 바꾸는 이유: 화면에서는 CSS 여백이 A.D. 와 연도를 띄우는데,
+         // 태그를 지우기만 하면 'A.D.1500' 처럼 붙어 버린다.
+         '<div class="tgt" style="margin-top:12px"><span>날짜표기</span><select id="cDate">'+
+         DATEFMT.map(f => '<option value="'+f[0]+'"'+(f[0]===dateFmt?' selected':'')+'>'+
+           f[1]+': '+f[2]({y:1500, m:0, d:4, w:'Sat', k:'토'})
+             .replace(/<\/s>/g,' ').replace(/<[^>]+>/g,'') +
+           '</option>').join('')+
+         '</select></div></div>'+
+         '<div class="pane" id="pane_dbg">';
+    // 대상 고르개 — 여기서 배를 고르면 아래 값들이 그 배의 것으로 바뀐다
+    h += '<div class="tgt"><span>대상</span><select id="tTarget">';
+    for(const key in SHIPS)
+      h += '<option value="'+key+'"'+(key===SHIP.key?' selected':'')+'>'+SHIPS[key].label+'</option>';
+    h += '</select></div>'+
+         '<div class="tgt2">'+SHIP.name+' · '+SHIP.rig+'</div>';
     for(const sp of SPEC){
       if(sp[0][0]==='@'){ h += '<h4>'+sp[0].slice(1)+'</h4>'; continue; }
-      const [k,lab,mn,mx,st] = sp;
-      h += '<div class="row"><div class="lab"><span class="nm">'+lab+'</span>'+
-           '<span><span class="val" id="v_'+k.replace('*','')+'"></span>'+
-           '<span class="def" id="d_'+k.replace('*','')+'"></span></span></div>'+
-           '<input type="range" id="i_'+k.replace('*','')+'" min="'+mn+'" max="'+mx+'" step="'+st+'"></div>';
+      const [k,lab,mn,mx,st] = sp, id = idOf(k);
+      h += '<div class="row" title="기본값 '+pdef(k)+'"><span class="nm">'+lab+'</span>'+
+           '<input type="range" id="i_'+id+'" min="'+mn+'" max="'+mx+'" step="'+st+'">'+
+           '<span class="val" id="v_'+id+'"></span></div>';
     }
     h += '<div class="out" id="tuneOut"></div>'+
          '<div class="btns"><button id="tCopy">값 복사</button>'+
          '<button id="tReset">되돌리기</button></div>'+
          '<div class="note">P 닫기 · 값은 브라우저에 자동 저장됩니다. '+
-         '확정되면 [값 복사] 후 붙여넣어 주십시오.</div>';
+         '확정되면 [값 복사] 후 붙여넣어 주십시오.</div>'+
+         '</div></div>';
     el.innerHTML = h;
+    for(const k in inputs) delete inputs[k];
+    for(const k in vals)   delete vals[k];
     for(const sp of SPEC){
       if(sp[0][0]==='@') continue;
-      const key = sp[0], id = key.replace('*','');
+      const key = sp[0], id = idOf(key);
       const inp = document.getElementById('i_'+id);
       inputs[id] = inp; vals[id] = document.getElementById('v_'+id);
-      document.getElementById('d_'+id).textContent =
-        '(' + (key[0]==='*' ? '—' : P0[key]) + ')';
       inp.addEventListener('input', ()=>{
-        const v = parseFloat(inp.value);
-        if(key[0]==='*'){ targetZoom = Math.max(ZMIN, Math.min(ZMAX, v)); }
-        else { P[key] = v; syncDerived(); }
+        pset(key, parseFloat(inp.value));
         save(); refresh();
       });
     }
+    // 배를 바꾸면 값이 통째로 달라지므로 패널을 다시 짓는다
+    document.getElementById('tTarget').addEventListener('change', e=>{
+      SHIP = SHIPS[e.target.value] || SHIP;
+      syncDerived(); build(); refresh(); showTab('dbg');
+    });
     document.getElementById('tCopy').addEventListener('click', copy);
     document.getElementById('tReset').addEventListener('click', reset);
+    // 안내줄 체크상자 — 저장값이 없으면 켜 둔다
+    const ch = document.getElementById('cHint');
+    let on = true;
+    try{ on = localStorage.getItem(LS_HINT) !== '0'; }catch(e){}
+    ch.checked = on; applyHint(on);
+    ch.addEventListener('change', ()=>applyHint(ch.checked));
+    // 날짜 표기 고르개
+    const cd = document.getElementById('cDate');
+    cd.addEventListener('change', ()=>{
+      dateFmt = cd.value;
+      try{ localStorage.setItem(LS_DATE, dateFmt); }catch(e){}
+      renderBands();
+    });
+    for(const [id] of TABS)
+      document.getElementById('mi_'+id).addEventListener('click', ()=>showTab(id));
+    let t0 = 'dbg';
+    try{ const s = localStorage.getItem(LS_TAB);
+         if(TABS.some(x=>x[0]===s)) t0 = s; }catch(e){}
+    showTab(t0);
   }
 
   function pull(){    // 파라미터 → 슬라이더
     for(const sp of SPEC){
       if(sp[0][0]==='@') continue;
-      const key = sp[0], id = key.replace('*',''), d = sp[6];
-      const v = key[0]==='*' ? zoom : P[key];
+      const key = sp[0], id = idOf(key), d = sp[6];
+      const v = pget(key);
       if(document.activeElement !== inputs[id]) inputs[id].value = v;
       vals[id].textContent = v.toFixed(d) + (sp[5] ? ' '+sp[5] : '');
+      // 기본값에서 벗어난 값은 색으로 알린다 — 무엇을 만졌는지 한눈에 보인다
+      const df = pdef(key);
+      vals[id].classList.toggle('ch', typeof df === 'number' && Math.abs(v - df) > 1e-9);
     }
   }
 
   const ATL_KM = 6000;   // 대서양 횡단 기준 거리 (리스본–카리브 대략)
+  // 막대의 척도는 디버그 슬라이더의 범위를 그대로 쓴다.
+  // 범위를 한 곳만 고치면 슬라이더와 막대가 함께 따라온다.
+  const RANGE = {};
+  for(const sp of SHIP_SPEC) if(sp[0][0] !== '@') RANGE[sp[0]] = [sp[2], sp[3]];
+  const rng = (key, v) => { const [a,b] = RANGE[key]; return (v-a)/(b-a); };
+  // 일반 탭 — 한 줄에 [라벨][막대][값]. 단위는 빼고 숫자만 둔다.
+  // 흰 눈금은 출항할 때의 자리. '지금 얼마인가'보다 '얼마나 떨어졌는가'가 궁금한 화면이다.
+  function renderGeneral(){
+    const p = document.getElementById('pane_gen'); if(!p) return;
+    const s = SHIP.spec, t = SHIP.state, c = SHIP.cargo;
+    const s0 = SHIP0[SHIP.key].spec, t0 = SHIP0[SHIP.key].state, c0 = SHIP0[SHIP.key].cargo;
+    const R = Math.round, cl = x => Math.max(0, Math.min(1, x));
+    function row(lab, txt, r, tick, col){
+      return '<div class="gr"><span>'+lab+'</span>'+
+             '<span class="gb"><i style="width:'+(cl(r)*100).toFixed(1)+'%;background:'+col+'"></i>'+
+             (tick==null ? '' : '<u style="left:'+(cl(tick)*100).toFixed(1)+'%"></u>')+'</span>'+
+             '<b>'+txt+'</b></div>';
+    }
+    // 물자 한 줄. 척도는 '출항할 때 실은 양'이다 —
+    // 슬라이더 범위(0~999)를 쓰면 40통이 4% 로 그려져 아무것도 안 보인다.
+    // 알고 싶은 것은 절대량이 아니라 '얼마나 남았는가'이므로 이쪽이 맞다.
+    // 4분의 1 아래로 떨어지면 붉게 알린다. 다시 채우면 100% 에서 멈춘다.
+    function sup(lab, v, base, col){
+      const b = base > 0 ? base : 1;
+      const r = v / b;
+      return row(lab, R(v)+' <i>/ '+R(base)+'</i>', r, null, r < 0.25 ? '#e0705f' : col);
+    }
+    const SC = '#c9a961';                       // 능력치 — 변하지 않는 값
+    const mor = t.morale;
+    const morC = mor > 60 ? '#9fe0a0' : mor > 30 ? '#e8b04b' : '#e0705f';
+    const load = c.water + c.food + c.timber + c.shot;   // 톤 환산은 아직 1:1
+    p.innerHTML =
+      '<div class="gh">'+SHIP.name+' <i>· '+SHIP.rig+'</i></div>'+
+      '<h4>배 성능</h4>'+
+      row('선회력', R(s.turnDeg), rng('s:turnDeg', s.turnDeg), rng('s:turnDeg', s0.turnDeg), SC)+
+      row('추진력', s.speedKn.toFixed(1), rng('s:speedKn', s.speedKn), rng('s:speedKn', s0.speedKn), SC)+
+      row('내구도', R(t.hull)+' <i>/ '+s.hullMax+'</i>', t.hull/s.hullMax, t0.hull/s.hullMax, '#e8b04b')+
+      // 흘수만 뒤집는다. 얕을수록 좋은 값이라, 안 뒤집으면 일곱 줄 중 하나만 뜻이 반대가 된다.
+      row('흘수', s.draft.toFixed(1), 1-rng('s:draft', s.draft), 1-rng('s:draft', s0.draft), SC)+
+      row('감시범위', R(s.sight), rng('s:sight', s.sight), rng('s:sight', s0.sight), SC)+
+      row('승무원', R(t.crew)+' <i>/ '+s.crewMax+'</i>', t.crew/s.crewMax, t0.crew/s.crewMax, '#8fd3e8')+
+      row('컨디션', R(mor)+' <i>/ 100</i>', mor/100, t0.morale/100, morC)+
+      '<h4>물자</h4>'+
+      sup('물',   c.water,  c0.water,  '#8fd3e8') +
+      sup('식량', c.food,   c0.food,   '#9fe0a0') +
+      sup('자재', c.timber, c0.timber, '#c9a961') +
+      sup('포탄', c.shot,   c0.shot,   '#b6a988') +
+      row('적재', R(load)+' <i>/ '+s.holdMax+'</i>', load/s.holdMax, null,
+          load > s.holdMax ? '#e0705f' : '#b08d57');
+  }
+  // 맨 위 띠 — 날짜, 그 아래 항해일. 스크롤 밖이라 어느 탭에서나 보인다.
+  // 표기 방식마다 길이가 달라 글자 크기를 함께 들고 다닌다.
+  function renderBands(){
+    const hd = document.getElementById('tHead');
+    if(!hd) return;
+    const cal = calendar();
+    const f = DATEFMT.find(x => x[0] === dateFmt) || DATEFMT[0];
+    const c = { y:cal.y, m:cal.m, d:cal.d, w:dow(), k:dowK() };
+    hd.innerHTML =
+      '<b style="font-size:'+f[3]+'px">'+f[2](c)+'</b>'+
+      '<em>항해 <b>'+(Math.floor(gameDay - voyageStartDay)+1)+'</b>일차</em>';
+  }
   function refresh(){
     pull();
+    renderGeneral();
+    renderBands();
     const viewKm  = W/zoom*KM_PER_PX;
     const crossS  = (W/zoom)/(SPEED*TIMEK);        // 화면 횡단 실시간 초
     const atlPx   = ATL_KM/KM_PER_PX;
@@ -1001,38 +1323,54 @@ const TUNE = (function(){
       '적도 일주 <b>'+hms(worldD/TIMEK)+'</b> / 게임 <b>'+worldD.toFixed(0)+'일</b>';
   }
 
-  function save(){ try{ localStorage.setItem(LS, JSON.stringify({P:P, zoom:targetZoom})); }catch(e){} }
+  function save(){
+    try{ localStorage.setItem(LS, JSON.stringify({ P:P, zoom:targetZoom, ships:SHIPS })); }catch(e){}
+  }
   function load(){
     try{
       const s = JSON.parse(localStorage.getItem(LS));
       if(!s) return;
       for(const k in P) if(typeof s.P[k]==='number') P[k]=s.P[k];
+      // 배는 있는 항목만 덮어쓴다 — 나중에 항목이 늘어도 옛 저장값이 깨뜨리지 않는다
+      if(s.ships) for(const key in SHIPS){
+        const src = s.ships[key]; if(!src) continue;
+        for(const grp of ['spec','state','cargo'])
+          if(src[grp]) for(const k in SHIPS[key][grp])
+            if(typeof src[grp][k]==='number') SHIPS[key][grp][k] = src[grp][k];
+      }
       if(typeof s.zoom==='number') targetZoom = Math.max(ZMIN,Math.min(ZMAX,s.zoom));
       syncDerived();
       console.log('tune: 저장된 값 복원');
     }catch(e){}
   }
   function reset(){
-    Object.assign(P, P0); syncDerived();
+    Object.assign(P, P0);
+    // 배도 함께 되돌린다 — 물자를 다 써 놓고 시험하다 한 번에 채우려면 이쪽이 편하다
+    for(const key in SHIPS) for(const grp of ['spec','state','cargo'])
+      Object.assign(SHIPS[key][grp], SHIP0[key][grp]);
+    syncDerived();
     try{ localStorage.removeItem(LS); }catch(e){}
-    refresh();
+    build(); refresh();
   }
   function copy(){
+    const sp = SHIP.spec, st = SHIP.state, cg = SHIP.cargo;
     const t =
       '// ===== 조정 결과 ('+new Date().toLocaleString('ko-KR')+') =====\n'+
-      'speedKn    : '+P.speedKn+'      // 전속(노트)\n'+
-      'sailMax    : '+P.sailMax+'      // 돛 단수\n'+
-      'nogoDeg    : '+P.nogoDeg+'      // 역풍 사각(도)\n'+
+      '// [배: '+SHIP.label+'] 능력치 — 확정하면 SHIPS 의 spec 에 옮긴다\n'+
+      'spec: { speedKn:'+sp.speedKn+', sailMax:'+sp.sailMax+', turnDeg:'+sp.turnDeg+
+        ', turnIdle:'+sp.turnIdle+', accUp:'+sp.accUp+', accDn:'+sp.accDn+',\n'+
+      '        nogoDeg:'+sp.nogoDeg+', draft:'+sp.draft+', sight:'+sp.sight+
+        ', hullMax:'+sp.hullMax+', crewMax:'+sp.crewMax+', holdMax:'+sp.holdMax+' },\n'+
+      '// 상태·물자 — 확정값이 아니라 시작값이다\n'+
+      'state: { hull:'+st.hull+', crew:'+st.crew+', morale:'+st.morale+' },\n'+
+      'cargo: { water:'+cg.water+', food:'+cg.food+', timber:'+cg.timber+', shot:'+cg.shot+' },\n'+
+      '\n// [세계]\n'+
       'windGain   : '+P.windGain+'      // 풍속 보정 배수\n'+
       'windMin    : '+P.windMin+'      // 무풍 기준(m/s)\n'+
       'windFull   : '+P.windFull+'      // 최대 추진 풍속(m/s)\n'+
-      'turnDeg    : '+P.turnDeg+'      // 선회율(도/초)\n'+
-      'turnIdle   : '+P.turnIdle+'      // 정지 선회 배수\n'+
-      'accUp      : '+P.accUp+'      // 가속 시간(초)\n'+
-      'accDn      : '+P.accDn+'      // 감속 시간(초)\n'+
       'hoursPerSec: '+P.hoursPerSec+'      // 시계: 1초 = N시간\n'+
       'curGain    : '+P.curGain+'      // 해류 배율\n'+
-      'shipScale  : '+P.shipScale+'      // 배 크기\n'+
+      'shipScale  : '+P.shipScale+'      // 배 크기(그림)\n'+
       'zoom       : '+zoom.toFixed(2)+'      // 지도 배율\n';
     const btn = document.getElementById('tCopy');
     const done = ()=>{ btn.textContent='복사됨'; setTimeout(()=>btn.textContent='값 복사',1200); };
@@ -1046,8 +1384,10 @@ const TUNE = (function(){
 
 function loop(now){
   let dt=(now-last)/1000; last=now; if(dt>0.05) dt=0.05;
-  update(dt);
-  CURVIZ.step(dt);
+  if(!paused){                  // 시간만 세운다. 아래 그리기는 그대로 돈다
+    update(dt);
+    CURVIZ.step(dt);
+  }
   // 배경(해도 밖 = 미지의 바다)
   ctx.setTransform(DPR,0,0,DPR,0,0);
   ctx.fillStyle=VOID; ctx.fillRect(0,0,W,H);
@@ -1063,12 +1403,11 @@ function loop(now){
   drawShip();
   compass();
   frameVignette();
-  drawHUD();
   // [테스트] 패널이 열려 있으면 휠 확대 등 외부 변경을 반영 (0.15초 간격)
   tuneT += dt;
   if(tuneT > 0.15){
     tuneT = 0;
-    if(document.getElementById('tune').style.display === 'block') TUNE.refresh();
+    if(document.getElementById('tune').classList.contains('on')) TUNE.refresh();
   }
   requestAnimationFrame(loop);
 }
