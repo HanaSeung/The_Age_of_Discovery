@@ -1,15 +1,22 @@
 // verify_integration.js - world_chart.html 통합 코드 문법 + 해류 샘플링 검증
 const fs = require('fs');
-const D = 'D:\\MyApp\\The_Age_of_Discovery\\';
+// 작업 폴더가 컴퓨터마다 다르므로(C:/D:) 경로를 박아두지 않는다.
+// 이 스크립트가 있는 자리를 기준으로 삼는다.
+const D = __dirname + '\\';
 const html = fs.readFileSync(D + 'world_chart.html', 'utf8');
 
 // 1) script 태그 연결 확인
 console.log('script tag linked :', html.includes('src="currents_data.js"'));
 console.log('CUR module        :', html.includes('const CUR = (function()'));
-console.log('current applied   :', html.includes('(ship.vx + curVec.x)*dt'));
+// 시간 변수가 dt 에서 gdt(게임 시간) 로 바뀌었다. 이름에 묶이지 않게 본다.
+console.log('current applied   :', /\(ship\.vx \+ curVec\.x\)\s*\*\s*g?dt/.test(html));
 
 // 2) 문법 검증 (브라우저 전역 스텁)
-const src = html.match(/<script>\n"use strict";([\s\S]*?)<\/script>/)[1];
+// 저장소는 LF, Windows 작업트리는 CRLF 다(.gitattributes 의 text=auto).
+// 어느 쪽이든 받도록 \r 을 열어둔다. 없으면 여기서 통째로 터진다.
+const _m = html.match(/<script>\r?\n"use strict";([\s\S]*?)<\/script>/);
+if(!_m){ console.log('X  <script> "use strict" 블록을 찾지 못했다'); process.exit(1); }
+const src = _m[1];
 const stub = `
 const stubCtx = new Proxy({}, {get:()=>()=>({data:new Uint8Array(0)})});
 const document={getElementById:()=>({getContext:()=>stubCtx,style:{},addEventListener:()=>{},innerHTML:'',width:0,height:0}),createElement:()=>({getContext:()=>stubCtx,width:0,height:0})};

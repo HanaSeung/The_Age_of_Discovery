@@ -16,8 +16,23 @@ chk('sunDecl() 이 있다',  /function sunDecl\(\)/.test(src));
 chk('sunAlt() 이 있다',   /function sunAlt\(wx, wy\)/.test(src));
 chk('darkness() 가 있다', /function darkness\(alt\)/.test(src));
 chk('nightVeil() 이 있다', /function nightVeil\(\)/.test(src));
-// 배 다음, 나침반 앞 — 지도는 어두워지고 계기는 밝게 남는다
-chk('배와 나침반 사이에서 그린다', /drawShip\(\);\s*\r?\n\s*nightVeil\(\);\s*\r?\n\s*compass\(\);/.test(src));
+// 배 다음, 나침반 앞 — 지도는 어두워지고 계기는 밝게 남는다.
+// 구름과 별이 들어오면서 사이에 층이 늘었으므로, 붙어 있는지가 아니라
+// 순서가 맞는지를 본다. 구름은 밤보다 앞(흐린 밤이 가장 캄캄해야 하니까),
+// 별은 밤보다 뒤(밤과 함께 어두워지면 안 되니까)다.
+const _lines = src.split(/\r?\n/);
+// 호출 뒤에 주석이 붙어 있을 수 있으므로 줄의 시작만 본다. 없으면 -1
+const _ord = n => _lines.findIndex(l => l.trim().startsWith(n));
+const _iShip = _ord('drawShip();'), _iNight = _ord('nightVeil();'),
+      _iComp = _ord('compass();');
+chk('배와 나침반 사이에서 그린다',
+    _iShip >= 0 && _iNight > _iShip && _iComp > _iNight,
+    'ship ' + _iShip + ' < night ' + _iNight + ' < compass ' + _iComp);
+const _iCloud = _ord('cloudVeil();'), _iStar = _ord('starVeil();');
+chk('구름이 밤보다 먼저다 (흐린 밤이 더 캄캄하다)',
+    _iCloud < 0 || _iCloud < _iNight);
+chk('별이 밤보다 나중이다 (밤과 함께 어두워지면 안 된다)',
+    _iStar < 0 || _iStar > _iNight);
 chk('패널에 밤 표현 칸이 있다', /'nightMode',\s*'밤 표현'/.test(src));
 chk('패널에 밤 세기 칸이 있다', /'nightGain',\s*'밤 세기'/.test(src));
 chk('세 가지 방식이 다 있다',
