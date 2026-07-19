@@ -641,7 +641,14 @@ const P = {
   // 이 배수로 그 축소분을 보정한다. 방향은 그대로, 크기만 키운다.
   windGain  : 1.8,
   shipScale : 1.15,   // 선체 크기 (1.15 ≈ 33 화면px)
-  curGain   : 1.0     // 해류 배율 (1.0 = 실측 그대로)
+  curGain   : 1.0,    // 해류 배율 (1.0 = 실측 그대로)
+  // [테스트] 배의 속력을 바람·돛 계산에서 떼어 내 이 값으로 고정한다.
+  //   0 = 끔 (물리대로). 그 위면 그 속력(kn)으로 붙박는다.
+  // 해류는 그대로 살아 있다. 그래서 나침반 가운데 대지속력은 이 값과 다르게
+  // 나온다 — 순류에선 크고 역류에선 작다. 그게 이 값의 쓸모다. 해류가 배를
+  // 얼마나 밀어내는지를 다른 변수 없이 딱 보려고 만든 것이니까.
+  // 좌초는 그대로 걸린다. 다만 돛을 내려도 다음 프레임에 다시 밀고 나간다.
+  shipForce : 0
 };
 const P0 = Object.assign({}, P);   // 초기값 보존 — 되돌리기용
 // 파생값 — syncDerived() 로 갱신
@@ -843,6 +850,11 @@ function update(dt){
   if(ship.speed < target) ship.speed = Math.min(target, ship.speed + ACC_UP*dt);
   else                    ship.speed = Math.max(target, ship.speed - ACC_DN*dt);
   if(ship.speed < 0) ship.speed = 0;              // 후진 없음
+  // [테스트] 강제 속력 — 여기서 사슬을 끊는다.
+  // 바람·돛·가감속은 위에서 그대로 계산해 두었다 (ship.sailEff 등 표시값이
+  // 살아 있어야 하므로). 결과만 덮어쓴다. 해류는 아래에서 따로 더해지므로
+  // 손대지 않는다.
+  if(P.shipForce > 0) ship.speed = P.shipForce / PX_TO_KN;
   // 선회: 속력이 빠를수록 잘 돌고, 정지에 가까우면 거의 안 돎
   const rf = TURN_IDLE + (1-TURN_IDLE)*Math.min(1, ship.speed/SPEED);
   let turn = 0;
@@ -1474,6 +1486,8 @@ const TUNE = (function(){
     ['c:shot',     '포탄',         0, 999,  1,   '발',   0]
   ];
   const WORLD_SPEC = [
+    ['@조작'],
+    ['shipForce', '강제 속력',   0,   30,  0.1, 'kn',   1],
     ['@바람'],
     ['windGain',  '풍속 보정',   0.5,  4,  0.1, '배',   1],
     ['windMin',   '무풍 기준',   0,    6,  0.1, 'm/s',  1],
@@ -1801,6 +1815,7 @@ const TUNE = (function(){
       'starGain   : '+P.starGain+'      // 별 밝기\n'+
       'skySpan    : '+P.skySpan+'      // 하늘 크기 (1.0 = 하늘 전체가 화면 안에)\n'+
       'curGain    : '+P.curGain+'      // 해류 배율\n'+
+      'shipForce  : '+P.shipForce+'      // 강제 속력(kn) 0=끔\n'+
       'shipScale  : '+P.shipScale+'      // 배 크기(그림)\n'+
       'zoom       : '+zoom.toFixed(2)+'      // 지도 배율\n';
     const btn = document.getElementById('tCopy');
