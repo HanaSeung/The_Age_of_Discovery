@@ -5,6 +5,10 @@ ne_50m_land.geojson
 oscar_raw.json
 cloud_raw.txt
 cloud_dds.txt
+precip_raw.txt
+precip_dds.txt
+airtemp_raw.txt
+airtemp_dds.txt
 star_raw.txt
 
 # 작업 기록 (로컬 보관 전용 — GitHub에 올리지 않음)

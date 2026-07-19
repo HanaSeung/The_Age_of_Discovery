@@ -213,6 +213,8 @@
 <script src="currents_data.js"></script>
 <script src="wind_data.js"></script>
 <script src="cloud_data.js"></script>
+<script src="precip_data.js"></script>
+<script src="airtemp_data.js"></script>
 <script src="star_data.js"></script>
 <script>
 "use strict";
@@ -439,6 +441,76 @@ const CLOUD = (function(){
   console.log('cloud:',NXC+'x'+NYC,NMC+'개월 | p10',Cd.p10.toFixed(1),
               '/ p90',Cd.p90.toFixed(1),'%');
   return {sample, p10:Cd.p10, p90:Cd.p90};
+})();
+
+// ===== 강수량 — 월별 기후값 =====
+// 구름과 격자·달 수가 같아 셈법이 그대로다. 다른 것은 단위(mm/일)와 정규화
+// 기준뿐이다. 왜 운량으로 대신하지 않고 따로 받았는지는 build_precip.py 참고.
+const PRECIP = (function(){
+  const Pd = window.PRECIP;
+  if(!Pd){ console.warn('precip_data.js 없음 — 강수 비활성'); return null; }
+  const NXP=Pd.nx, NYP=Pd.ny, NMP=Pd.months, NP=NXP*NYP;
+  const bin = atob(Pd.data);
+  const q = new Uint8Array(NP*NMP);
+  for(let i=0;i<q.length;i++) q[i] = bin.charCodeAt(i);
+  const k = Pd.quantStep;                    // uint8 -> mm/일
+  function cell(m,j,i){ return q[m*NP + j*NXP + i]*k; }
+  // 월드좌표 + 월(실수) -> 쌍선형 + 시간 선형보간. 결과는 강수량 mm/일
+  function sample(wx, wy, monthF){
+    const lon = wrapX(wx)/WORLD_W*360-180;
+    const lat = 90 - wy/WORLD_H*180;
+    let fx = (lon+180)/4 - 0.5, fy = (90-lat)/4 - 0.5;
+    let i0 = Math.floor(fx), j0 = Math.floor(fy);
+    const tx = fx-i0, ty = fy-j0;
+    if(j0<0) j0=0; if(j0>NYP-2) j0=NYP-2;
+    const i1 = ((i0+1)%NXP+NXP)%NXP; i0 = ((i0%NXP)+NXP)%NXP;
+    const j1 = j0+1;
+    const w00=(1-tx)*(1-ty), w10=tx*(1-ty), w01=(1-tx)*ty, w11=tx*ty;
+    const m0 = Math.floor(monthF)%NMP, m1=(m0+1)%NMP, mt = monthF-Math.floor(monthF);
+    const a = cell(m0,j0,i0)*w00 + cell(m0,j0,i1)*w10
+            + cell(m0,j1,i0)*w01 + cell(m0,j1,i1)*w11;
+    const b = cell(m1,j0,i0)*w00 + cell(m1,j0,i1)*w10
+            + cell(m1,j1,i0)*w01 + cell(m1,j1,i1)*w11;
+    return a + (b-a)*mt;
+  }
+  console.log('precip:',NXP+'x'+NYP,NMP+'개월 | 중앙',Pd.p50.toFixed(2),
+              '/ p99',Pd.p99.toFixed(2),'mm/일');
+  return {sample, p50:Pd.p50, p90:Pd.p90, p99:Pd.p99};
+})();
+
+// ===== 지상 기온 — 월별 기후값 =====
+// 강수와 격자·달 수가 같다. 다른 것은 담는 방식뿐이다 — 기온은 음수가 있어
+// 기준점(baseC)에서부터 세어 담았다.
+const AIRTEMP = (function(){
+  const Ad = window.AIRTEMP;
+  if(!Ad){ console.warn('airtemp_data.js 없음 — 기온은 위도 근사로 대체'); return null; }
+  const NXA=Ad.nx, NYA=Ad.ny, NMA=Ad.months, NA=NXA*NYA;
+  const bin = atob(Ad.data);
+  const q = new Uint8Array(NA*NMA);
+  for(let i=0;i<q.length;i++) q[i] = bin.charCodeAt(i);
+  const b0 = Ad.baseC, k = Ad.quantStep;     // uint8 -> 섭씨
+  function cell(m,j,i){ return b0 + q[m*NA + j*NXA + i]*k; }
+  // 월드좌표 + 월(실수) -> 쌍선형 + 시간 선형보간. 결과는 섭씨
+  function sample(wx, wy, monthF){
+    const lon = wrapX(wx)/WORLD_W*360-180;
+    const lat = 90 - wy/WORLD_H*180;
+    let fx = (lon+180)/4 - 0.5, fy = (90-lat)/4 - 0.5;
+    let i0 = Math.floor(fx), j0 = Math.floor(fy);
+    const tx = fx-i0, ty = fy-j0;
+    if(j0<0) j0=0; if(j0>NYA-2) j0=NYA-2;
+    const i1 = ((i0+1)%NXA+NXA)%NXA; i0 = ((i0%NXA)+NXA)%NXA;
+    const j1 = j0+1;
+    const w00=(1-tx)*(1-ty), w10=tx*(1-ty), w01=(1-tx)*ty, w11=tx*ty;
+    const m0 = Math.floor(monthF)%NMA, m1=(m0+1)%NMA, mt = monthF-Math.floor(monthF);
+    const a = cell(m0,j0,i0)*w00 + cell(m0,j0,i1)*w10
+            + cell(m0,j1,i0)*w01 + cell(m0,j1,i1)*w11;
+    const b = cell(m1,j0,i0)*w00 + cell(m1,j0,i1)*w10
+            + cell(m1,j1,i0)*w01 + cell(m1,j1,i1)*w11;
+    return a + (b-a)*mt;
+  }
+  console.log('airtemp:',NXA+'x'+NYA,NMA+'개월 | 최저',Ad.minC.toFixed(1),
+              '/ 최고',Ad.maxC.toFixed(1),'도');
+  return {sample, minC:Ad.minC, maxC:Ad.maxC};
 })();
 
 // ===== 별 — 1500년의 하늘 (build_stars.py) =====
@@ -1382,6 +1454,53 @@ function cloudOpacityAt(wx, wy){
   const nz = cfbm(wx - cloudDX, wy - cloudDY, nc, oc);
   return sstep(t-CLOUD_EDGE, t+CLOUD_EDGE, nz) * Math.min(1, P.cloudGain);
 }
+
+// ===== 비와 눈 =====
+// 두 겹을 곱한다.
+//
+//   1) 그 바다가 원래 비가 잦은 곳인가 — 월별 실측 강수량(mm/일)에서 온다.
+//   2) 지금 이 자리가 구름 밑인가 — 화면에 실제로 그린 구름 그 자체.
+//
+// 1만 쓰면 하늘이 갠 자리에 비가 오고, 2만 쓰면 구름이 지날 때마다 비가 온다.
+// 곱해야 둘 다 면한다.
+//
+// 처음에는 1을 운량에서 끌어냈다. 틀린 길이었다. 하늘이 덮인 것과 비가 오는
+// 것은 다르다 — 페루 앞바다는 층적운으로 운량이 66% 나 되지만 비는 0.2mm/일
+// 로 지구에서 가장 메마르고, 적도수렴대는 운량이 60% 인데 5mm/일 이 내린다.
+// 운량으로 재면 두 바다가 뒤집힌다. 그래서 강수량을 따로 받았다.
+//
+// 구름 표시를 끄면 비도 그친다. cloudOpacityAt 을 거치기 때문인데, 의도한
+// 것이다 — 보이지 않는 구름에서 비가 내리면 이상하다.
+const PRECIP_NONE = 0, PRECIP_RAIN = 1, PRECIP_SNOW = 2;
+// 세기 0~1 로 만드는 기준. p99(약 10mm/일)에서 1 이 되게 잡는다. 평균이나
+// p90 으로 자르면 적도수렴대와 몬순이 통째로 상한에 붙어 구별이 사라진다.
+const PRECIP_FULL = 10.0;   // 이만큼 오면 세기 1 (mm/일)
+const PRECIP_MIN  = 0.5;    // 이 아래는 비로 치지 않는다 (mm/일)
+// 눈이 되는 문턱. 0도가 아니라 조금 위다 — 눈은 떨어지면서 녹으므로, 지상
+// 기온이 영상 1~2도여도 아직 눈으로 닿는다. 기온이 실측이라 이 값은 물리적
+// 근거대로 잡을 수 있다. 수온 근사를 쓰던 때는 이 문턱이 근사 오차를 메우는
+// 손잡이 노릇을 해서, 시험한 곳만 맞고 나머지는 틀렸다.
+const PRECIP_ST   = 1.5;    // 지상 기온이 이 아래면 눈 (℃)
+
+// 지상 기온. 실측이 있으면 그것을, 없으면 위도 근사(seaTempC)로 물러선다.
+function airTempC(wx, wy){
+  return AIRTEMP ? AIRTEMP.sample(wx, wy, monthF()) : seaTempC(wy);
+}
+
+function precipAt(wx, wy, out){
+  out.type = PRECIP_NONE; out.rate = 0;
+  if(!PRECIP) return out;
+  const here = cloudOpacityAt(wx, wy);      // 지금 구름 밑인가
+  if(here <= 0) return out;
+  const mmd = PRECIP.sample(wx, wy, monthF());          // 원래 비가 잦은 곳인가
+  if(mmd <= PRECIP_MIN) return out;
+  const wet = Math.min(1, (mmd - PRECIP_MIN)/(PRECIP_FULL - PRECIP_MIN));
+  out.rate = wet * here;
+  out.type = airTempC(wx, wy) < PRECIP_ST ? PRECIP_SNOW : PRECIP_RAIN;
+  return out;
+}
+// 매 칸마다 객체를 새로 만들지 않도록 하나를 돌려 쓴다. windVec·curVec 과 같은 방식.
+const precipHere = {type:0, rate:0};
 
 // ===== 별 — 밤하늘 =====
 // 화면 전체를 '올려다본 하늘' 로 읽는다. 가운데가 천정, 가장자리가 지평선이다.
