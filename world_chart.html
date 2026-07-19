@@ -740,6 +740,10 @@ const P = {
   cloudSize : 90,     // 구름 덩어리 하나의 크기(km). 잔 결은 이것의 1/8 까지 간다.
                       //   0 = 화면이 보여 줄 수 있는 가장 잘게 (배율에 따라 달라진다)
   cloudDrift: 1.0,    // 구름이 흐르는 빠르기 (1 = 바람과 같은 속도)
+  precipMode: 1,      // 비와 눈: 0 끄기 · 1 켜기
+  precipGain: 1.0,    // 강수 표현의 세기 (0 = 안 보임, 1 = 기준)
+                      //   방울 수와 진하기를 함께 올린다. 실제 강수량은 실측
+                      //   자료가 정하므로 이 값은 눈에 보이는 정도만 바꾼다.
   starMode  : 1,      // 별: 0 끄기 · 1 켜기
   starCount : 500,    // 그릴 별의 수 (밝은 것부터) — 최대 904
   starGain  : 1.0,    // 별의 밝기
@@ -938,6 +942,9 @@ function update(dt){
   zoom += (targetZoom-zoom)*Math.min(1,dt*10);
   gameDay += dt * TIMEK;                     // 달력 진행 (시계 배속 반영)
   consume(dt * TIMEK);                       // 물·식량 소비는 게임일 기준
+  // 빗줄기가 떨어지는 데 쓰는 시계. 게임 시각이 아니라 실제 시각을 따른다 —
+  // 시계 배속을 48시간으로 올렸다고 비가 24배 빨리 떨어지면 화면이 깨진다.
+  precipT += dt;
 
   // === 바람 샘플 → 돛의 추진 효율 ===
   windVec.x=0; windVec.y=0;
@@ -1502,6 +1509,96 @@ function precipAt(wx, wy, out){
 // 매 칸마다 객체를 새로 만들지 않도록 하나를 돌려 쓴다. windVec·curVec 과 같은 방식.
 const precipHere = {type:0, rate:0};
 
+// ===== 비와 눈 — 그리기 =====
+// 방울은 화면에 붙어 있다. 지도가 아니라 관측자 쪽에 있는 것이니까 — 지도를
+// 끌어도 비는 따라 흐르지 않는다. 다만 '여기 비가 오는가' 는 그 방울이 덮고
+// 있는 월드 좌표로 판정하므로, 다우대를 벗어나면 비가 그친다.
+//
+// 위에서 내려다보는 해도에 떨어지는 비를 그리는 것은 엄밀히는 앞뒤가 맞지
+// 않는다. 하늘을 위에서 보면 빗줄기는 점으로 보일 것이다. 그래도 이렇게 한
+// 이유는 등불(밤 표현 2번)과 같다 — 해도의 사실성보다 '지금 비가 온다' 가
+// 한눈에 읽히는 쪽을 골랐다. 지도에 얹어 바람 따라 흐르게 하는 방식도
+// 가능하다. 필요해지면 표현 번호를 늘려 나란히 둔다.
+const PRECIP_N     = 900;     // 화면에 뿌릴 방울 수 (세기 1 일 때 전부 쓴다)
+const RAIN_RGB     = '162,182,201';
+const SNOW_RGB     = '244,248,252';
+const RAIN_LEN     = 13;      // 빗줄기 길이 (화면 px)
+const RAIN_FALL    = 780;     // 비가 떨어지는 빠르기 (화면 px/초)
+const SNOW_FALL    = 95;      // 눈은 느리다
+const SNOW_R       = 1.5;     // 눈송이 반지름 (화면 px)
+const RAIN_ALPHA   = 0.50;
+const SNOW_ALPHA   = 0.85;
+const PRECIP_TILT  = 9.0;     // 이 풍속(m/s)에서 빗줄기가 45도로 눕는다
+let precipT = 0;              // 흐른 시간(초). update() 가 실제 시각으로 올린다.
+
+// 방울 하나당 [가로 위치 0~1, 세로 위치 0~1, 빠르기 편차, 나타나는 문턱].
+// 문턱이 있어서 세기가 약하면 일부만 그려진다 — 방울 수로 세기를 표현한다.
+// 위치를 고정해 두는 이유는 매 프레임 난수를 뽑으면 방울이 제자리에서
+// 깜빡이기 때문이다. 자리는 붙박고 시간만 흐르게 해야 떨어져 보인다.
+const precipDrops = (function(){
+  const a = new Float32Array(PRECIP_N*4);
+  for(let i=0;i<PRECIP_N;i++){
+    a[i*4]   = Math.random();
+    a[i*4+1] = Math.random();
+    a[i*4+2] = 0.75 + Math.random()*0.5;
+    a[i*4+3] = Math.random();
+  }
+  return a;
+})();
+
+function precipVeil(){
+  if(!PRECIP) return;
+  if(Math.round(P.precipMode) === 0 || P.precipGain <= 0) return;
+  const gain = Math.min(2, P.precipGain);
+  screenTransform();
+  // 바람에 기운 정도. 화면에서 아래로 1 내려올 때 옆으로 밀리는 비율이다.
+  const tilt = Math.max(-2, Math.min(2, windVec.x / PRECIP_TILT));
+
+  const rainL = RAIN_LEN * (0.6 + 0.4*gain);
+  let nRain = 0, nSnow = 0;
+  ctx.beginPath();                       // 1차: 비
+  for(let i=0;i<PRECIP_N;i++){
+    const spd = precipDrops[i*4+2];
+    // 세로는 시간에 따라 흘러내리고 화면 아래에서 위로 되돌아온다.
+    const fy = (precipDrops[i*4+1] + precipT*RAIN_FALL*spd/H) % 1;
+    const y  = fy * (H + rainL) - rainL;
+    const x  = (((precipDrops[i*4] + precipT*RAIN_FALL*spd*tilt/W) % 1) + 1) % 1 * W;
+    const wx = ship.x + (x - W/2)/zoom, wy = ship.y + (y - H/2)/zoom;
+    precipAt(wx, wy, precipHere);
+    if(precipHere.type !== PRECIP_RAIN) continue;
+    if(precipHere.rate * gain < precipDrops[i*4+3]) continue;
+    ctx.moveTo(x, y);
+    ctx.lineTo(x - rainL*tilt, y - rainL);
+    nRain++;
+  }
+  if(nRain){
+    ctx.strokeStyle = 'rgba('+RAIN_RGB+','+(RAIN_ALPHA*Math.min(1,gain)).toFixed(3)+')';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+
+  ctx.beginPath();                       // 2차: 눈 — 느리고 옆으로 더 흔들린다
+  for(let i=0;i<PRECIP_N;i++){
+    const spd = precipDrops[i*4+2];
+    const fy = (precipDrops[i*4+1] + precipT*SNOW_FALL*spd/H) % 1;
+    const y  = fy * (H + 4) - 2;
+    // 눈은 가벼워 바람에 더 밀리고, 방울마다 좌우로 나풀거린다.
+    const sway = Math.sin(precipT*1.7*spd + i)*6;
+    const x = ((((precipDrops[i*4] + precipT*SNOW_FALL*spd*tilt*2.2/W) % 1) + 1) % 1) * W + sway;
+    const wx = ship.x + (x - W/2)/zoom, wy = ship.y + (y - H/2)/zoom;
+    precipAt(wx, wy, precipHere);
+    if(precipHere.type !== PRECIP_SNOW) continue;
+    if(precipHere.rate * gain < precipDrops[i*4+3]) continue;
+    ctx.moveTo(x + SNOW_R, y);
+    ctx.arc(x, y, SNOW_R, 0, Math.PI*2);
+    nSnow++;
+  }
+  if(nSnow){
+    ctx.fillStyle = 'rgba('+SNOW_RGB+','+(SNOW_ALPHA*Math.min(1,gain)).toFixed(3)+')';
+    ctx.fill();
+  }
+}
+
 // ===== 별 — 밤하늘 =====
 // 화면 전체를 '올려다본 하늘' 로 읽는다. 가운데가 천정, 가장자리가 지평선이다.
 // 지도 배율과는 무관하다 — 지도를 확대한다고 별이 커지지는 않으니까.
@@ -1660,6 +1757,8 @@ const TUNE = (function(){
     ['cloudGain', '구름 세기',   0,    1,  0.05,'배',   2],
     ['cloudSize', '구름 크기',    0,  500,  5,   'km',  0],
     ['cloudDrift','구름 속도',   0,    3,  0.1, '배',   1],
+    ['precipMode','비눈 표현',   0,    1,  1,   '',     0],
+    ['precipGain','비눈 세기',   0,    2,  0.05,'배',   2],
     ['starMode',  '별 표현',     0,    1,  1,   '',     0],
     ['starCount', '별 개수',   100,  904,  20,  '개',   0],
     ['starGain',  '별 밝기',     0,    2,  0.05,'배',   2],
@@ -2007,7 +2106,9 @@ function loop(now){
   drawWindArrows();
   drawShip();
   cloudVeil();          // 구름이 먼저다. 그래야 밤이 구름까지 함께 어둡게 한다
-  nightVeil();          //   — 흐린 밤이 가장 캄캄하다
+  precipVeil();         //   — 흐린 밤이 가장 캄캄하다. 비는 구름 다음 —
+                        //     구름 속에서 내리는 것이므로 구름보다 앞에 온다
+  nightVeil();          // 밤은 지도·구름·비를 한꺼번에 덮는다
   starVeil();           // 별은 밤 다음이다. 밤에 함께 어두워지면 안 되니까
   compass();
   frameVignette();
