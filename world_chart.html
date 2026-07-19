@@ -212,6 +212,7 @@
 <script src="bathy_data.js"></script>
 <script src="currents_data.js"></script>
 <script src="wind_data.js"></script>
+<script src="cloud_data.js"></script>
 <script>
 "use strict";
 // (지도 데이터는 land_data.js 로 분리됨 - build_land.py)
@@ -400,6 +401,45 @@ const WIND = (function(){
 })();
 const windVec = {x:0,y:0};
 
+// ===== 구름 — 월별 전운량 평년값 (build_cloud.py) =====
+// 바람과 같은 4도 격자·같은 12개월이라 보간 셈법을 그대로 쓴다.
+// 다른 점은 성분이 하나뿐이고 부호가 없다는 것 (0~100%, uint8).
+//
+// 이것은 날씨가 아니라 기후다. 리스본 7월이 42% 라면 게임 안에서 늘 42% 다.
+// 맑은 날과 흐린 날이 갈리려면 이 값을 확률로 삼아 날마다 주사위를 굴려야 하는데,
+// 그건 별 관측·위치 오차와 함께 다룰 일이라 여기서는 손대지 않는다.
+const CLOUD = (function(){
+  const Cd = window.CLOUD;
+  if(!Cd){ console.warn('cloud_data.js 없음 — 구름 비활성'); return null; }
+  const NXC=Cd.nx, NYC=Cd.ny, NMC=Cd.months, NC=NXC*NYC;
+  const bin = atob(Cd.data);
+  const q = new Uint8Array(NC*NMC);
+  for(let i=0;i<q.length;i++) q[i] = bin.charCodeAt(i);
+  const k = Cd.quantStep;                    // uint8 -> percent
+  function cell(m,j,i){ return q[m*NC + j*NXC + i]*k; }
+  // 월드좌표 + 월(실수) -> 쌍선형 + 시간 선형보간. 결과는 운량 0~100%
+  function sample(wx, wy, monthF){
+    const lon = wrapX(wx)/WORLD_W*360-180;
+    const lat = 90 - wy/WORLD_H*180;
+    let fx = (lon+180)/4 - 0.5, fy = (90-lat)/4 - 0.5;
+    let i0 = Math.floor(fx), j0 = Math.floor(fy);
+    const tx = fx-i0, ty = fy-j0;
+    if(j0<0) j0=0; if(j0>NYC-2) j0=NYC-2;
+    const i1 = ((i0+1)%NXC+NXC)%NXC; i0 = ((i0%NXC)+NXC)%NXC;
+    const j1 = j0+1;
+    const w00=(1-tx)*(1-ty), w10=tx*(1-ty), w01=(1-tx)*ty, w11=tx*ty;
+    const m0 = Math.floor(monthF)%NMC, m1=(m0+1)%NMC, mt = monthF-Math.floor(monthF);
+    const a = cell(m0,j0,i0)*w00 + cell(m0,j0,i1)*w10
+            + cell(m0,j1,i0)*w01 + cell(m0,j1,i1)*w11;
+    const b = cell(m1,j0,i0)*w00 + cell(m1,j0,i1)*w10
+            + cell(m1,j1,i0)*w01 + cell(m1,j1,i1)*w11;
+    return a + (b-a)*mt;
+  }
+  console.log('cloud:',NXC+'x'+NYC,NMC+'개월 | p10',Cd.p10.toFixed(1),
+              '/ p90',Cd.p90.toFixed(1),'%');
+  return {sample, p10:Cd.p10, p90:Cd.p90};
+})();
+
 // ===== 달력 — 바람의 계절 변화를 위해 필요 =====
 const EPOCH_Y = 1500;                 // 게임 시작 연도
 let gameDay = 0;                      // 누적 게임 일수 (실수)
@@ -557,6 +597,11 @@ const P = {
   nightGain : 1.0,    // 밤의 세기 (0 = 밤이 와도 그대로, 1 = 기준)
   nightLamp : 6000,   // 등불이 닿는 거리(km) — 2번에서만 쓴다. 화면이 아니라 거리 기준이라
                       //   지도를 확대하면 원이 커지고 축소하면 작아진다.
+  cloudMode : 2,      // 구름 표현: 0 끄기 · 1 안개 · 2 덩어리
+  cloudGain : 1.0,    // 구름의 진하기 (0 = 안 보임, 1 = 기준)
+  cloudSize : 90,     // 구름 덩어리 하나의 크기(km). 잔 결은 이것의 1/8 까지 간다.
+                      //   0 = 화면이 보여 줄 수 있는 가장 잘게 (배율에 따라 달라진다)
+  cloudDrift: 1.0,    // 구름이 흐르는 빠르기 (1 = 바람과 같은 속도)
   windMin   : 0.5,    // 이 풍속(m/s) 이하는 무풍 — 배가 멈춤
   windFull  : 9.0,    // 이 풍속 이상이면 돛이 최대 추진력
                       //  (6.0 으로 낮추면 바다 대부분이 100%가 되어 무풍대가 사라진다)
@@ -1079,6 +1124,167 @@ function drawWindArrows(){
   }
 }
 
+// ===== 구름 =====
+// 화면 한 점마다 계산하면 무겁다. STEP 간격으로만 값을 읽어 작은 그림 한 장을
+// 만들고, 그것을 화면 크기로 늘린다. 늘리는 일은 캔버스가 해 주므로 칸과 칸
+// 사이는 저절로 부드럽게 이어진다. 격자 무늬가 보이면 STEP 을 줄이면 된다.
+//
+// 두 가지 방식이 있다.
+//   1 안개  — 운량을 그대로 농담으로 칠한다. 데이터를 눈으로 확인하는 용도다.
+//             모양도 없고 움직이지도 않아 항해할 때는 심심하다.
+//   2 덩어리 — 노이즈로 구름 모양을 만들고 바람에 실어 흘려보낸다. 운량은
+//             농담이 아니라 '얼마나 덮을까'를 정하는 문턱값으로 쓴다.
+const CLOUD_STEP = 24;                  // 안개(모드1) 표본 간격 (화면 CSS px)
+const CLOUD_STEP2 = 16;                 // 덩어리(모드2) — 무늬가 보여야 하니 더 촘촘히
+const CLOUD_RGB = '219,226,233';        // 옅은 잿빛 흰색
+const CLOUD_MAXA = 0.62;                // 안개: 운량 100% 일 때의 불투명도
+const CLOUD_MAXA2 = 0.80;               // 덩어리: 구름 속은 더 두껍다
+
+// ── 구름 무늬 ──────────────────────────────────────────────
+// 세 가지가 각각 다른 일을 맡는다.
+//   노이즈 = 덩어리의 모양      (뭉친 곳과 뚫린 곳)
+//   기후   = 덩어리의 빽빽함    (문턱값으로 쓴다)
+//   바람   = 덩어리가 흐르는 쪽 (wind_data.js 를 그대로 쓴다)
+// 새 데이터는 하나도 필요 없다. cloud_data.js 를 쓰는 방식만 바뀐다 —
+// '얼마나 뿌옇게 칠할까'에서 '어디까지를 구름으로 칠까'로.
+const CLOUD_OCT = 4;                    // 겹치는 층 수 (가장 잔 결은 덩어리의 1/8)
+const CLOUD_EDGE = 0.055;               // 구름 가장자리가 흐려지는 폭
+const CLOUD_N0 = 256;                   // 분위수 표를 잴 때 쓴 기준 격자 수
+// 경도로 격자 수만큼 되풀이되는 무늬를 쓴다. 그래야 세계를 한 바퀴 돌아
+// 제자리로 왔을 때 구름이 이어진다. 위도 방향은 되풀이할 필요가 없다.
+// 격자 수가 반드시 정수여야 하는 까닭이 이것이다 — 구름 크기를 km 로 받아도
+// 마지막에는 정수 격자 수로 되돌려 놓는다.
+function cloudCells(km){
+  if(!(km > 0)) return 65536;           // 0 이하 = 가장 잘게. 부르는 쪽에서 걸러 준다
+  return Math.max(16, Math.min(65536, Math.round(WORLD_W / (km / KM_PER_PX))));
+}
+function chash(i, j){
+  let h = Math.imul(i, 374761393) ^ Math.imul(j, 668265263);
+  h = Math.imul(h ^ (h>>>13), 1274126177);
+  return ((h ^ (h>>>16)) >>> 0) / 4294967296;
+}
+function sstep(a, b, x){
+  const t = Math.max(0, Math.min(1, (x-a)/(b-a)));
+  return t*t*(3-2*t);
+}
+function cnoise(x, y, per){
+  let i0 = Math.floor(x), j0 = Math.floor(y);
+  const u = sstep(0,1,x-i0), v = sstep(0,1,y-j0);
+  const i1 = (((i0+1)%per)+per)%per; i0 = ((i0%per)+per)%per;
+  const j1 = j0+1;
+  const a = chash(i0,j0) + (chash(i1,j0)-chash(i0,j0))*u;
+  const b = chash(i0,j1) + (chash(i1,j1)-chash(i0,j1))*u;
+  return a + (b-a)*v;
+}
+// n = 경도 한 바퀴의 격자 수, oct = 겹칠 층 수
+function cfbm(wx, wy, n, oct){
+  let amp = 0.5, sum = 0, norm = 0, sc = n/WORLD_W, per = n;
+  for(let o=0; o<oct; o++){
+    sum += amp * cnoise(wx*sc, wy*sc, per);
+    norm += amp; amp *= 0.5; sc *= 2; per *= 2;
+  }
+  return sum/norm;
+}
+// 층을 겹친 노이즈는 0.5 언저리에 몰려 있어 그냥 자르면 운량과 덮인 넓이가
+// 어긋난다. 값의 분포를 미리 재어 두고, '위에서 몇 %' 를 실제 문턱값으로
+// 바꿔 쓴다. 그래야 운량 30% 가 정말 화면의 30% 를 덮는다.
+//
+// 표를 층 수마다 따로 만든다. 층을 덜 겹치면 값이 가운데로 더 몰려 분포가
+// 달라지기 때문이다. 격자 수(구름 크기)는 좌표를 늘이고 줄일 뿐이라 분포를
+// 바꾸지 않는다. 그래서 크기는 표 하나로 되지만 층 수는 그렇지 않다.
+const CLOUD_QT = (function(){
+  const tabs = [];
+  for(let oct=1; oct<=CLOUD_OCT; oct++){
+    const v = new Float64Array(4096);
+    for(let k=0;k<v.length;k++)                 // 격자와 어긋나게 흩뿌린다
+      v[k] = cfbm((k*2749.7)%WORLD_W, (k*1327.3)%WORLD_H, CLOUD_N0, oct);
+    v.sort();
+    const t = new Float32Array(65);
+    for(let i=0;i<=64;i++) t[i] = v[Math.round(i/64*(v.length-1))];
+    tabs.push(t);
+  }
+  return tabs;
+})();
+function cthr(cov, oct){                // 덮을 비율(0~1) -> 노이즈 문턱값
+  const t = CLOUD_QT[Math.max(1, Math.min(CLOUD_OCT, oct)) - 1];
+  const f = Math.max(0, Math.min(1, 1-cov))*64, i = Math.floor(f);
+  return i >= 64 ? t[64] : t[i] + (t[i+1]-t[i])*(f-i);
+}
+// 흐른 거리. 바람에 실어 조금씩 밀어 준다. 경도 한 바퀴에서 되풀이되므로
+// 아무리 오래 항해해도 값이 커지지 않는다.
+let cloudDX = 0, cloudDY = 0, cloudLastDay = 0;
+let cloudNCell = 0, cloudOctUsed = 0;   // 마지막 프레임에 실제로 쓴 격자 수·층 수
+
+let cloudCv = null, cloudCx = null, cloudImg = null, cloudGW = 0, cloudGH = 0;
+function cloudVeil(){
+  if(!CLOUD) return;
+  const mode = Math.round(P.cloudMode);
+  if(mode === 0 || P.cloudGain <= 0) return;
+  const st = (mode === 2) ? CLOUD_STEP2 : CLOUD_STEP;
+  const gw = Math.ceil(W/st)+1, gh = Math.ceil(H/st)+1;
+  if(!cloudCv || gw !== cloudGW || gh !== cloudGH){
+    cloudCv = document.createElement('canvas');
+    cloudCv.width = gw; cloudCv.height = gh;
+    cloudCx = cloudCv.getContext('2d');
+    cloudImg = cloudCx.createImageData(gw, gh);
+    cloudGW = gw; cloudGH = gh;
+    // 색은 고정이므로 한 번만 채운다. 매 프레임 바뀌는 것은 알파뿐이다.
+    const d = cloudImg.data, rgb = CLOUD_RGB.split(',').map(Number);
+    for(let i=0;i<d.length;i+=4){ d[i]=rgb[0]; d[i+1]=rgb[1]; d[i+2]=rgb[2]; }
+  }
+  const mf = monthF(), d = cloudImg.data;
+  const g = Math.min(1, P.cloudGain) * (mode===2 ? CLOUD_MAXA2 : CLOUD_MAXA) * 255;
+  let nCell = 0, oct = CLOUD_OCT;
+
+  if(mode === 2){
+    // 화면이 보여 줄 수 있는 가장 잔 구름. 표본 간격의 두 배보다 잘게 만들면
+    // 덩어리가 표본 사이를 빠져나가 지지직거리는 잡음이 된다. 크기 슬라이더를
+    // 0 까지 내리면 여기에 걸려 멈춘다 — 구름이 사라지는 것이 아니라
+    // '더 잘게는 못 보여 준다'는 뜻이다. 지도를 확대할수록 더 잘아진다.
+    const minKm = (st*2/zoom) * KM_PER_PX;
+    nCell = cloudCells(Math.max(P.cloudSize, minKm));
+    // 그 아래 층들도 같은 이유로 잘라 낸다. 지구를 통째로 볼 때는 층 하나만
+    // 남아 큰 덩어리만 보인다 — 그게 옳다.
+    const base = (WORLD_W/nCell) * zoom;        // 가장 큰 층의 화면 크기(px)
+    oct = 1;
+    while(oct < CLOUD_OCT && base/(1<<oct) >= st*2) oct++;
+    cloudNCell = nCell; cloudOctUsed = oct;     // 검증·디버그에서 들여다본다
+
+    // 배가 있는 곳의 바람으로 무늬 전체를 민다. 화면 하나에 들어오는 바다는
+    // 바람이 거의 같으므로 이걸로 충분하고, 곳마다 다르게 밀면 무늬가
+    // 시간이 갈수록 늘어져 뭉개진다.
+    //
+    // windVec 은 update() 에서 이미 windGain 이 곱해진 값이다. 여기서 또
+    // 곱하면 구름만 1.8배 빨라진다.
+    const dDay = gameDay - cloudLastDay; cloudLastDay = gameDay;
+    if(dDay > 0 && dDay < 30){          // 되감기·큰 건너뜀은 무시한다
+      const k = 86.4 / KM_PER_PX * dDay * P.cloudDrift;   // m/s -> 월드px/게임일
+      cloudDX = (cloudDX + windVec.x*k) % WORLD_W;
+      cloudDY += windVec.y*k;
+    }
+  }
+
+  let p = 3;
+  for(let jy=0; jy<gh; jy++){
+    const wy = ship.y + (jy*st - H/2)/zoom;
+    for(let ix=0; ix<gw; ix++, p+=4){
+      const wx = ship.x + (ix*st - W/2)/zoom;
+      const pct = CLOUD.sample(wx, wy, mf);
+      if(mode === 2){
+        const n = cfbm(wx - cloudDX, wy - cloudDY, nCell, oct);
+        const t = cthr(pct*0.01, oct);
+        d[p] = sstep(t-CLOUD_EDGE, t+CLOUD_EDGE, n) * g;
+      }else{
+        d[p] = pct * 0.01 * g;          // 안개 — 운량을 그대로 농담으로
+      }
+    }
+  }
+  cloudCx.putImageData(cloudImg, 0, 0);
+  screenTransform();
+  // 표본은 칸의 '가운데'가 아니라 '모서리'에 있다. 그래서 반 칸씩 밀어 그린다.
+  ctx.drawImage(cloudCv, -st/2, -st/2, gw*st, gh*st);
+}
+
 // ===== 밤 — 다 그려진 해도 위에 막을 한 장 덮는다 =====
 // 지도와 배는 어두워지고, 나침반·날짜 같은 계기는 밝게 남는다.
 // 밤에는 등불로 계기를 비춰 보니 그 편이 자연스럽다.
@@ -1171,6 +1377,10 @@ const TUNE = (function(){
     ['nightMode', '밤 표현',     0,    3,  1,   '',     0],
     ['nightGain', '밤 세기',     0,  1.5,  0.05,'배',   2],
     ['nightLamp', '등불 거리',   0, 10000,  25, 'km',  0],
+    ['cloudMode', '구름 표현',   0,    2,  1,   '',     0],
+    ['cloudGain', '구름 세기',   0,    1,  0.05,'배',   2],
+    ['cloudSize', '구름 크기',    0,  500,  5,   'km',  0],
+    ['cloudDrift','구름 속도',   0,    3,  0.1, '배',   1],
     ['curGain',   '해류 세기',   0,    5,  0.1, '배',   1],
     ['@화면'],
     ['*zoom',     '지도 배율',   0.3, 100, 0.1, '×',    2],
@@ -1472,6 +1682,10 @@ const TUNE = (function(){
       'nightMode  : '+P.nightMode+'      // 밤 표현 0끄기 1어둡게 2등불 3색조\n'+
       'nightGain  : '+P.nightGain+'      // 밤의 세기\n'+
       'nightLamp  : '+P.nightLamp+'      // 등불이 닿는 거리(km)\n'+
+      'cloudMode  : '+P.cloudMode+'      // 구름 표현 0끄기 1안개 2덩어리\n'+
+      'cloudGain  : '+P.cloudGain+'      // 구름 세기\n'+
+      'cloudSize  : '+P.cloudSize+'      // 구름 덩어리 크기(km)\n'+
+      'cloudDrift : '+P.cloudDrift+'      // 구름이 흐르는 빠르기\n'+
       'curGain    : '+P.curGain+'      // 해류 배율\n'+
       'shipScale  : '+P.shipScale+'      // 배 크기(그림)\n'+
       'zoom       : '+zoom.toFixed(2)+'      // 지도 배율\n';
@@ -1504,7 +1718,8 @@ function loop(now){
   CURVIZ.draw();
   drawWindArrows();
   drawShip();
-  nightVeil();
+  cloudVeil();          // 구름이 먼저다. 그래야 밤이 구름까지 함께 어둡게 한다
+  nightVeil();          //   — 흐린 밤이 가장 캄캄하다
   compass();
   frameVignette();
   // [테스트] 패널이 열려 있으면 휠 확대 등 외부 변경을 반영 (0.15초 간격)

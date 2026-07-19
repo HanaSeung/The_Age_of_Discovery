@@ -28,6 +28,10 @@ function makeCtx(tag){
   c.createLinearGradient = () => ({ addColorStop(){} });
   c.measureText = () => ({ width: 10 });
   c.getImageData = () => ({ data: new Uint8ClampedArray(4) });
+  // 구름 막이 쓴다. 진짜 캔버스처럼 알파를 담을 자리를 내어 주어야
+  // 그리기 코드를 흉내만 내지 않고 실제로 돌려 볼 수 있다.
+  c.createImageData = (w,h) => ({ width:w, height:h,
+                                  data: new Uint8ClampedArray((w|0)*(h|0)*4) });
   return c;
 }
 const els = {};
@@ -80,7 +84,8 @@ sandbox.globalThis = sandbox;
 vm.createContext(sandbox);
 
 console.log('\n=== 1. 데이터 파일 ===');
-for(const f of ['land_data.js','bathy_data.js','currents_data.js','wind_data.js']){
+for(const f of ['land_data.js','bathy_data.js','currents_data.js','wind_data.js',
+                'cloud_data.js']){
   const p = path.join(D, f);
   const ok = fs.existsSync(p);
   chk(f + ' 있음', ok, ok ? (fs.statSync(p).size/1024).toFixed(0)+' KB' : '');
