@@ -213,6 +213,7 @@
 <script src="currents_data.js"></script>
 <script src="wind_data.js"></script>
 <script src="cloud_data.js"></script>
+<script src="star_data.js"></script>
 <script>
 "use strict";
 // (지도 데이터는 land_data.js 로 분리됨 - build_land.py)
@@ -440,6 +441,31 @@ const CLOUD = (function(){
   return {sample, p10:Cd.p10, p90:Cd.p90};
 })();
 
+// ===== 별 — 1500년의 하늘 (build_stars.py) =====
+// 예일 밝은 별 목록에서 4.5등급까지, 세차운동을 걸어 1500년 좌표로 옮겨 둔 것.
+// 밝은 것부터 정렬돼 있어 앞에서 잘라 쓰면 그대로 '밝은 별만' 이 된다.
+const STARS = (function(){
+  const Sd = window.STARS;
+  if(!Sd){ console.warn('star_data.js 없음 — 별 비활성'); return null; }
+  const n = Sd.count;
+  const bin = atob(Sd.data);
+  const b = new Uint8Array(bin.length);
+  for(let i=0;i<b.length;i++) b[i] = bin.charCodeAt(i);
+  const dv = new DataView(b.buffer);
+  // 시간각을 매 프레임 다시 재므로 적경·적위는 라디안으로, sin/cos 는 미리 구해 둔다.
+  const ra = new Float64Array(n), sinD = new Float64Array(n), cosD = new Float64Array(n);
+  const mag = new Float32Array(n);
+  for(let i=0;i<n;i++){
+    ra[i] = dv.getUint16(i*2, true) / 65536 * 2*Math.PI;
+    const d = dv.getInt16(n*2 + i*2, true) / 32767 * (Math.PI/2);
+    sinD[i] = Math.sin(d); cosD[i] = Math.cos(d);
+    mag[i] = b[n*4 + i] * Sd.magStep + Sd.magMin;
+  }
+  console.log('stars:', n, '개 |', Sd.epoch + '년 하늘 | 가장 밝은 별',
+              mag[0].toFixed(2), '등급');
+  return { n, ra, sinD, cosD, mag, epoch: Sd.epoch, names: Sd.names||{} };
+})();
+
 // ===== 달력 — 바람의 계절 변화를 위해 필요 =====
 const EPOCH_Y = 1500;                 // 게임 시작 연도
 let gameDay = 0;                      // 누적 게임 일수 (실수)
@@ -602,6 +628,11 @@ const P = {
   cloudSize : 90,     // 구름 덩어리 하나의 크기(km). 잔 결은 이것의 1/8 까지 간다.
                       //   0 = 화면이 보여 줄 수 있는 가장 잘게 (배율에 따라 달라진다)
   cloudDrift: 1.0,    // 구름이 흐르는 빠르기 (1 = 바람과 같은 속도)
+  starMode  : 1,      // 별: 0 끄기 · 1 켜기
+  starCount : 500,    // 그릴 별의 수 (밝은 것부터) — 최대 904
+  starGain  : 1.0,    // 별의 밝기
+  skySpan   : 1.0,    // 하늘 크기. 1.0 = 하늘 전체가 화면 안에 원으로 들어온다.
+                      //   2.0 = 화면을 가득 채우지만 천구의 극이 화면 밖으로 나간다
   windMin   : 0.5,    // 이 풍속(m/s) 이하는 무풍 — 배가 멈춤
   windFull  : 9.0,    // 이 풍속 이상이면 돛이 최대 추진력
                       //  (6.0 으로 낮추면 바다 대부분이 100%가 되어 무풍대가 사라진다)
@@ -1285,6 +1316,81 @@ function cloudVeil(){
   ctx.drawImage(cloudCv, -st/2, -st/2, gw*st, gh*st);
 }
 
+// 한 점의 구름 두께 0~1. 별이 가려지는 정도를 재는 데 쓴다. 화면에 칠하는
+// 값과 같은 셈법이어야 한다 — 눈에 구름이 보이는데 별이 총총하면 곤란하다.
+function cloudOpacityAt(wx, wy){
+  if(!CLOUD) return 0;
+  const mode = Math.round(P.cloudMode);
+  if(mode === 0 || P.cloudGain <= 0) return 0;
+  const pct = CLOUD.sample(wx, wy, monthF());
+  if(mode !== 2) return Math.min(1, pct*0.01) * Math.min(1, P.cloudGain);
+  const nc = cloudNCell || cloudCells(P.cloudSize);
+  const oc = cloudOctUsed || CLOUD_OCT;
+  const t = cthr(pct*0.01, oc);
+  const nz = cfbm(wx - cloudDX, wy - cloudDY, nc, oc);
+  return sstep(t-CLOUD_EDGE, t+CLOUD_EDGE, nz) * Math.min(1, P.cloudGain);
+}
+
+// ===== 별 — 밤하늘 =====
+// 화면 전체를 '올려다본 하늘' 로 읽는다. 가운데가 천정, 가장자리가 지평선이다.
+// 지도 배율과는 무관하다 — 지도를 확대한다고 별이 커지지는 않으니까.
+//
+// 좌우가 지도와 뒤집혀 있다. 지도는 위에서 내려다본 것이고 하늘은 안에서
+// 올려다본 것이라, 같은 '동쪽' 이 서로 반대편에 온다. 별자리 모양을 바로
+// 세우려면 이쪽이 맞다 (종이 성도가 동쪽을 왼쪽에 두는 것과 같은 이유).
+//
+// 항성시는 따로 계산하지 않는다. 정의상 '어떤 천체의 시간각 + 그 천체의 적경'
+// 이 항성시이므로, 게임이 이미 쓰고 있는 태양의 시간각을 그대로 빌리면
+// 밤낮과 별이 어긋날 수가 없다. 태양 모형을 나중에 손봐도 별이 따라온다.
+function sunRA(){
+  const lam = 2*Math.PI*((gameDay % 365) - 80.5)/365;   // 태양의 황경
+  return Math.atan2(Math.cos(AXIAL)*Math.sin(lam), Math.cos(lam));
+}
+function starVeil(){
+  if(!STARS || Math.round(P.starMode) === 0 || P.starGain <= 0) return;
+  const night = darkness(sunAlt(ship.x, ship.y));        // 0 낮 ~ 1 완전한 밤
+  if(night <= 0.02) return;
+  // 머리 위 구름. 별은 배에서 올려다보는 것이라 배가 선 자리 한 점만 본다.
+  const vis = night * (1 - Math.min(1, cloudOpacityAt(ship.x, ship.y))) * P.starGain;
+  if(vis <= 0.015) return;
+
+  const lon = (wrapX(ship.x)/WORLD_W*360 - 180) * Math.PI/180;
+  const lat = (90 - ship.y/DEG2PXY) * Math.PI/180;
+  const sinLat = Math.sin(lat), cosLat = Math.cos(lat);
+  const lst = ((gameDay % 1) - 0.5)*2*Math.PI + lon + sunRA();
+  // 지평선까지의 화면 거리. 1.0 이면 하늘 전체가 화면 안에 원으로 들어온다.
+  // 화면을 가득 채우려면(대각선까지) 2.0 언저리인데, 그러면 하늘 원반이
+  // 화면보다 커져서 천구의 극이 화면 밖으로 나간다 — 위도 46도 아래에서는
+  // 북극성이 아예 안 보이게 된다. 그래서 기본값은 1.0 이다.
+  const R = (Math.min(W, H)/2) * P.skySpan;
+  const cx = W/2, cy = H/2;
+  const n = Math.min(STARS.n, Math.round(P.starCount));
+
+  screenTransform();
+  ctx.fillStyle = '#f2f4ff';
+  for(let i=0; i<n; i++){
+    const ha = lst - STARS.ra[i];
+    const ch = Math.cos(ha), sh = Math.sin(ha);
+    const sinAlt = sinLat*STARS.sinD[i] + cosLat*STARS.cosD[i]*ch;
+    if(sinAlt <= 0) continue;                            // 지평선 아래 — 안 보인다
+    const az = Math.atan2(-STARS.cosD[i]*sh,
+                          STARS.sinD[i]*cosLat - STARS.cosD[i]*sinLat*ch);
+    const r = (1 - Math.asin(sinAlt)/(Math.PI/2)) * R;
+    const sx = cx - r*Math.sin(az), sy = cy - r*Math.cos(az);
+    if(sx < -4 || sx > W+4 || sy < -4 || sy > H+4) continue;
+    // 지평선에 가까울수록 대기를 길게 지나 흐려진다
+    const ext = 0.3 + 0.7*Math.sqrt(sinAlt);
+    const m = STARS.mag[i];
+    const a = Math.min(1, (1.15 - 0.21*m)) * ext * vis;
+    if(a <= 0.02) continue;
+    const s = Math.max(0.7, 2.4 - 0.42*m);
+    ctx.globalAlpha = a;
+    if(s > 1.7){ ctx.beginPath(); ctx.arc(sx, sy, s*0.5, 0, 6.2832); ctx.fill(); }
+    else ctx.fillRect(sx - s*0.5, sy - s*0.5, s, s);
+  }
+  ctx.globalAlpha = 1;
+}
+
 // ===== 밤 — 다 그려진 해도 위에 막을 한 장 덮는다 =====
 // 지도와 배는 어두워지고, 나침반·날짜 같은 계기는 밝게 남는다.
 // 밤에는 등불로 계기를 비춰 보니 그 편이 자연스럽다.
@@ -1381,6 +1487,10 @@ const TUNE = (function(){
     ['cloudGain', '구름 세기',   0,    1,  0.05,'배',   2],
     ['cloudSize', '구름 크기',    0,  500,  5,   'km',  0],
     ['cloudDrift','구름 속도',   0,    3,  0.1, '배',   1],
+    ['starMode',  '별 표현',     0,    1,  1,   '',     0],
+    ['starCount', '별 개수',   100,  904,  20,  '개',   0],
+    ['starGain',  '별 밝기',     0,    2,  0.05,'배',   2],
+    ['skySpan',   '하늘 크기',   0.8, 2.2,  0.05,'배',   2],
     ['curGain',   '해류 세기',   0,    5,  0.1, '배',   1],
     ['@화면'],
     ['*zoom',     '지도 배율',   0.3, 100, 0.1, '×',    2],
@@ -1686,6 +1796,10 @@ const TUNE = (function(){
       'cloudGain  : '+P.cloudGain+'      // 구름 세기\n'+
       'cloudSize  : '+P.cloudSize+'      // 구름 덩어리 크기(km)\n'+
       'cloudDrift : '+P.cloudDrift+'      // 구름이 흐르는 빠르기\n'+
+      'starMode   : '+P.starMode+'      // 별 0끄기 1켜기\n'+
+      'starCount  : '+P.starCount+'      // 그릴 별의 수 (밝은 것부터)\n'+
+      'starGain   : '+P.starGain+'      // 별 밝기\n'+
+      'skySpan    : '+P.skySpan+'      // 하늘 크기 (1.0 = 하늘 전체가 화면 안에)\n'+
       'curGain    : '+P.curGain+'      // 해류 배율\n'+
       'shipScale  : '+P.shipScale+'      // 배 크기(그림)\n'+
       'zoom       : '+zoom.toFixed(2)+'      // 지도 배율\n';
@@ -1720,6 +1834,7 @@ function loop(now){
   drawShip();
   cloudVeil();          // 구름이 먼저다. 그래야 밤이 구름까지 함께 어둡게 한다
   nightVeil();          //   — 흐린 밤이 가장 캄캄하다
+  starVeil();           // 별은 밤 다음이다. 밤에 함께 어두워지면 안 되니까
   compass();
   frameVignette();
   // [테스트] 패널이 열려 있으면 휠 확대 등 외부 변경을 반영 (0.15초 간격)
