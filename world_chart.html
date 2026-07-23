@@ -744,6 +744,14 @@ const P = {
   precipGain: 1.0,    // 강수 표현의 세기 (0 = 안 보임, 1 = 기준)
                       //   방울 수와 진하기를 함께 올린다. 실제 강수량은 실측
                       //   자료가 정하므로 이 값은 눈에 보이는 정도만 바꾼다.
+  rainSize  : 1.0,    // 빗줄기의 몸집 (0.5~3배) — 길이와 굵기에 곱한다
+  snowSize  : 1.0,    // 눈송이의 몸집 (0.5~3배) — 반지름에 곱한다. 빗줄기와
+                      //   눈송이는 어울리는 몸집이 달라 따로 만졌다.
+  // [테스트] 실측을 제쳐 두고 배가 있는 화면 전체에 강제로 내리게 한다.
+  //   0 = 끔 (실측대로) · 1 = 비 · 2 = 눈 · 3 = 폭우. shipForce 와 같은
+  //   계열의 시험 손잡이다 — 궂은 바다까지 항해하지 않고도 눈으로 확인한다.
+  //   폭우는 비의 극단이다: 줄기가 길고 굵고 빠르며 그늘이 짙다.
+  precipTest: 0,
   // 시야를 깎는 몫 (0 = 안 깎음, 1 = 통째로 깎음). 감시범위에 곱한다.
   visNight  : 0.85,   // 완전한 밤이면 시야가 15% 로 준다
   visCloud  : 0.35,   // 하늘이 완전히 덮이면 65% 로
@@ -1386,6 +1394,19 @@ function cloudVeil(){
   if(!CLOUD) return;
   const mode = Math.round(P.cloudMode);
   if(mode === 0 || P.cloudGain <= 0) return;
+  // 눈이 내리는 하늘은 시커먼 덩어리가 아니다. 눈구름은 하늘 전체에 고르게
+  // 퍼진 희부연 장막이라, 덩어리 대신 밝은 막 한 장으로 바꿔 그린다. 배가 선
+  // 자리 기준이다(밤 sunAlt 와 같은 관례). 판정(cloudOpacityAt)은 그대로라
+  // 강수·시야·별은 아무것도 달라지지 않는다 — 바뀌는 것은 그리는 방식뿐이다.
+  precipAt(ship.x, ship.y, precipHere);
+  if(precipHere.type === PRECIP_SNOW && precipHere.rate > 0){
+    screenTransform();
+    const a = Math.min(1, P.cloudGain) * (SNOW_SKY_A0 + SNOW_SKY_A1*precipHere.rate);
+    ctx.fillStyle = 'rgba('+SNOW_SKY+','+a.toFixed(3)+')';
+    ctx.fillRect(0, 0, W, H);
+    cloudNCell = 0; cloudOctUsed = 0;      // 이 프레임은 덩어리 셈이 없다
+    return;
+  }
   const st = (mode === 2) ? CLOUD_STEP2 : CLOUD_STEP;
   const gw = Math.ceil(W/st)+1, gh = Math.ceil(H/st)+1;
   if(!cloudCv || gw !== cloudGW || gh !== cloudGH){
@@ -1500,6 +1521,12 @@ function airTempC(wx, wy){
 
 function precipAt(wx, wy, out){
   out.type = PRECIP_NONE; out.rate = 0;
+  // [테스트] 강제 강수. 구름 유무도 무시한다 — 맑은 하늘 밑에서 켜도 보여야
+  // 시험 단추 노릇을 한다. 이 함수를 거치는 것은 모두 함께 움직이므로,
+  // 시야(updateSight)가 깎이는 것까지 한 손잡이로 확인할 수 있다.
+  // 1과 3(폭우)은 판정으로는 같은 비다 — 폭우의 몸집은 precipVeil 이 입힌다.
+  const tst = Math.round(P.precipTest);
+  if(tst){ out.type = (tst === 2 ? PRECIP_SNOW : PRECIP_RAIN); out.rate = 1; return out; }
   if(!PRECIP) return out;
   const here = cloudOpacityAt(wx, wy);      // 지금 구름 밑인가
   if(here <= 0) return out;
@@ -1533,6 +1560,13 @@ const SNOW_R       = 1.5;     // 눈송이 반지름 (화면 px)
 const RAIN_ALPHA   = 0.50;
 const SNOW_ALPHA   = 0.85;
 const PRECIP_TILT  = 9.0;     // 이 풍속(m/s)에서 빗줄기가 45도로 눕는다
+// 비가 오는 하늘은 어둡고, 눈이 오는 하늘은 희부옇다. 같은 '덮인 하늘' 인데
+// 낮빛이 정반대라, 그늘과 장막을 따로 두었다.
+const GLOOM_RGB   = '22,27,36';    // 비 하늘의 그늘 색 (푸른 기 없는 어둠)
+const RAIN_GLOOM  = 0.38;          // 세찬 비(세기 1)가 화면에 드리우는 그늘의 짙기
+const RAIN_GLOOM_H = 0.58;         // 폭우의 그늘 — 낮인데도 저녁 같아진다
+const SNOW_SKY    = '228,233,241'; // 눈 하늘의 장막 색 — 밝은 잿빛
+const SNOW_SKY_A0 = 0.12, SNOW_SKY_A1 = 0.22;   // 장막 짙기 = A0 + A1 × 세기
 let precipT = 0;              // 흐른 시간(초). update() 가 실제 시각으로 올린다.
 
 // 방울 하나당 [가로 위치 0~1, 세로 위치 0~1, 빠르기 편차, 나타나는 문턱].
@@ -1554,19 +1588,38 @@ function precipVeil(){
   if(!PRECIP) return;
   if(Math.round(P.precipMode) === 0 || P.precipGain <= 0) return;
   const gain = Math.min(2, P.precipGain);
+  // 입자의 몸집. 세기(gain)가 방울 수를 바꾼다면 이것은 방울 하나를 키운다.
+  // 비와 눈이 따로다 — 빗줄기와 눈송이는 어울리는 몸집이 서로 다르다.
+  const rsz = Math.max(0.5, Math.min(3, P.rainSize));
+  const ssz = Math.max(0.5, Math.min(3, P.snowSize));
   screenTransform();
+  // 비 하늘은 어둡다. 비가 온다는 것은 먹구름이 해를 가렸다는 뜻이라 낮에도
+  // 어둑하고, 밤이면 이 위에 밤막이 겹쳐 더 캄캄해진다. 배가 선 자리
+  // 기준(밤 sunAlt 와 같은 관례). 눈은 여기 해당 없다 — 눈 하늘은 오히려
+  // 희부옇고, 그쪽 장막은 cloudVeil 이 그린다.
+  // 폭우(기상 시험 3) — 비의 극단. 줄기가 1.6배 길고 굵으며 1.5배 빨리
+  // 떨어지고 그늘이 짙다. 지금은 시험 전용이지만, 폭풍이 들어오면 폭풍의
+  // 한복판에서 이 몸을 그대로 쓴다.
+  const heavy = Math.round(P.precipTest) === 3;
+  precipAt(ship.x, ship.y, precipHere);
+  if(precipHere.type === PRECIP_RAIN && precipHere.rate > 0){
+    ctx.fillStyle = 'rgba('+GLOOM_RGB+','+
+      ((heavy ? RAIN_GLOOM_H : RAIN_GLOOM)*precipHere.rate*Math.min(1,gain)).toFixed(3)+')';
+    ctx.fillRect(0, 0, W, H);
+  }
   // 바람에 기운 정도. 화면에서 아래로 1 내려올 때 옆으로 밀리는 비율이다.
   const tilt = Math.max(-2, Math.min(2, windVec.x / PRECIP_TILT));
 
-  const rainL = RAIN_LEN * (0.6 + 0.4*gain);
+  const hf = heavy ? 1.5 : 1;            // 폭우의 낙하 배속
+  const rainL = RAIN_LEN * (0.6 + 0.4*gain) * rsz * (heavy ? 1.6 : 1);
   let nRain = 0, nSnow = 0;
   ctx.beginPath();                       // 1차: 비
   for(let i=0;i<PRECIP_N;i++){
     const spd = precipDrops[i*4+2];
     // 세로는 시간에 따라 흘러내리고 화면 아래에서 위로 되돌아온다.
-    const fy = (precipDrops[i*4+1] + precipT*RAIN_FALL*spd/H) % 1;
+    const fy = (precipDrops[i*4+1] + precipT*RAIN_FALL*hf*spd/H) % 1;
     const y  = fy * (H + rainL) - rainL;
-    const x  = (((precipDrops[i*4] + precipT*RAIN_FALL*spd*tilt/W) % 1) + 1) % 1 * W;
+    const x  = (((precipDrops[i*4] + precipT*RAIN_FALL*hf*spd*tilt/W) % 1) + 1) % 1 * W;
     const wx = ship.x + (x - W/2)/zoom, wy = ship.y + (y - H/2)/zoom;
     precipAt(wx, wy, precipHere);
     if(precipHere.type !== PRECIP_RAIN) continue;
@@ -1577,10 +1630,11 @@ function precipVeil(){
   }
   if(nRain){
     ctx.strokeStyle = 'rgba('+RAIN_RGB+','+(RAIN_ALPHA*Math.min(1,gain)).toFixed(3)+')';
-    ctx.lineWidth = 1;
+    ctx.lineWidth = Math.max(0.7, rsz * (heavy ? 1.3 : 1));   // 긴 줄기는 굵기도 따라가야 비처럼 보인다
     ctx.stroke();
   }
 
+  const sr = SNOW_R * ssz;
   ctx.beginPath();                       // 2차: 눈 — 느리고 옆으로 더 흔들린다
   for(let i=0;i<PRECIP_N;i++){
     const spd = precipDrops[i*4+2];
@@ -1593,8 +1647,8 @@ function precipVeil(){
     precipAt(wx, wy, precipHere);
     if(precipHere.type !== PRECIP_SNOW) continue;
     if(precipHere.rate * gain < precipDrops[i*4+3]) continue;
-    ctx.moveTo(x + SNOW_R, y);
-    ctx.arc(x, y, SNOW_R, 0, Math.PI*2);
+    ctx.moveTo(x + sr, y);
+    ctx.arc(x, y, sr, 0, Math.PI*2);
     nSnow++;
   }
   if(nSnow){
@@ -1623,7 +1677,14 @@ const SIGHT_MIN = 0.5;    // 아무리 캄캄해도 뱃전은 보인다 (km)
 // 머리 위 하늘이 얼마나 열려 있는가 (0 = 완전히 덮임, 1 = 맑음).
 // 별 관측과 시야가 같은 하늘을 봐야 하므로 한 군데로 모았다 — 구름에 별이
 // 가렸는데 시야는 멀쩡하면 이상하다.
+// 비나 눈이 내리는 동안은 0 이다. 내린다는 것은 구름이 머리 위를 덮고 있다는
+// 뜻이고, 그 하늘에 별빛이 뚫고 내려올 틈은 없다. "눈 오는 밤 별하늘" 은
+// 그림이 만든 인상이지 실제로는 없는 장면이다 — 별이 보이면 맑은 밤이고,
+// 맑은 밤에는 눈이 오지 않는다.
 function skyClearAt(wx, wy){
+  const p = {type:0, rate:0};
+  precipAt(wx, wy, p);
+  if(p.rate > 0) return 0;
   return 1 - Math.min(1, cloudOpacityAt(wx, wy));
 }
 
@@ -1802,6 +1863,9 @@ const TUNE = (function(){
     ['cloudDrift','구름 속도',   0,    3,  0.1, '배',   1],
     ['precipMode','비눈 표현',   0,    1,  1,   '',     0],
     ['precipGain','비눈 세기',   0,    2,  0.05,'배',   2],
+    ['rainSize',  '비 크기',     0.5,  3,  0.05,'배',   2],
+    ['snowSize',  '눈 크기',     0.5,  3,  0.05,'배',   2],
+    ['precipTest','기상 시험',   0,    3,  1,   '',     0],
     ['visNight',  '시야:밤',     0,    1,  0.05,'깎음', 2],
     ['visCloud',  '시야:구름',   0,    1,  0.05,'깎음', 2],
     ['visRain',   '시야:비눈',   0,    1,  0.05,'깎음', 2],

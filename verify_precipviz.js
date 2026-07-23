@@ -66,7 +66,7 @@ function grabFn(name){
 const grab = re => (src.match(re) || [''])[0];
 
 // 붓질을 받아 적는 가짜 ctx
-const strokes = [], arcs = [];
+const strokes = [], arcs = [], fills = [];
 let mode = null, cur = null;
 const ctx = {
   setTransform(){},
@@ -74,6 +74,7 @@ const ctx = {
   moveTo(x, y){ if(cur) cur.push([x, y]); },
   lineTo(x, y){ if(cur && cur.length) strokes.push([cur[cur.length-1], [x, y]]); },
   arc(x, y, r){ arcs.push([x, y, r]); },
+  fillRect(x, y, w, h){ fills.push([x, y, w, h, this._fs]); },
   stroke(){}, fill(){},
   set strokeStyle(v){ this._ss = v; }, get strokeStyle(){ return this._ss; },
   set fillStyle(v){ this._fs = v; },   get fillStyle(){ return this._fs; },
@@ -87,7 +88,7 @@ const box = {
   W: 1600, H: 900, zoom: 1, DPR: 1,
   ship: { x: 0, y: 0 },
   windVec: { x: 0, y: 0 },
-  P: { precipMode: 1, precipGain: 1 }
+  P: { precipMode: 1, precipGain: 1, rainSize: 1, snowSize: 1, precipTest: 0 }
 };
 vm.createContext(box);
 vm.runInContext(fs.readFileSync(D + 'precip_data.js', 'utf8'), box);
@@ -99,6 +100,7 @@ vm.runInContext([
   grab(/const AIRTEMP = \(function\(\)\{[\s\S]*?\n\}\)\(\);/),
   (src.match(/const PRECIP_\w+[^;]*;/g) || []).join('\n'),
   (src.match(/const (RAIN|SNOW)_\w+[^;]*;/g) || []).join('\n'),
+  grab(/const GLOOM_RGB[^;]+;/),
   'let precipT = 0;',
   grab(/const precipDrops = \(function\(\)\{[\s\S]*?\n\}\)\(\);/),
   grabFn('airTempC'), grabFn('precipAt'), grabFn('precipVeil'),
@@ -121,9 +123,9 @@ function frame(lat, lon, month, t, gain, windX){
   box.ship.x = vm.runInContext('((' + lon + ')+180)/360*WORLD_W', box);
   box.P.precipGain = (gain === undefined) ? 1 : gain;
   box.windVec.x = windX || 0;
-  strokes.length = 0; arcs.length = 0;
+  strokes.length = 0; arcs.length = 0; fills.length = 0;
   vm.runInContext('precipVeil()', box);
-  return { rain: strokes.slice(), snow: arcs.slice() };
+  return { rain: strokes.slice(), snow: arcs.slice(), fills: fills.slice() };
 }
 
 // 다우대·건조대를 가르려면 배율을 올려야 한다. zoom 1 이면 화면 하나가
@@ -212,6 +214,97 @@ chk('표현 0 이면 아무것도 안 그린다', (function(){
   box.P.precipMode = 1;
   return r.rain.length === 0 && r.snow.length === 0;
 })());
+// 시험 손잡이 — 실측이 '없음' 인 자리(페루 앞바다, 배율 13)에서도 그려져야 한다.
+box.P.precipTest = 1;
+const tv1 = frame(-20, -90, 6, 0);
+box.P.precipTest = 2;
+const tv2 = frame(-20, -90, 6, 0);
+box.P.precipTest = 0;
+const tv0 = frame(-20, -90, 6, 0);
+console.log('  시험 1 -> 빗줄기 ' + tv1.rain.length + '  시험 2 -> 눈 ' +
+            tv2.snow.length + '  끔 -> ' + (tv0.rain.length + tv0.snow.length));
+chk('시험 1 이면 건조대에도 비를 그린다', tv1.rain.length > 700 && tv1.snow.length === 0);
+chk('시험 2 면 눈만 그린다', tv2.snow.length > 700 && tv2.rain.length === 0);
+chk('시험을 끄면 실측으로 돌아온다', tv0.rain.length === 0 && tv0.snow.length === 0);
+
+// ===== 7-2. 크기 손잡이 — 비와 눈이 따로 논다 =====
+// 세기가 방울 '수' 라면 크기는 방울 '하나' 다. 빗줄기는 rainSize 만, 눈송이는
+// snowSize 만 들어야 한다 — 한쪽을 키웠는데 다른 쪽이 따라오면 분리가 아니다.
+console.log('\n=== 7-2. 크기 ===');
+chk('P 에 rainSize 가 있다', /rainSize\s*:\s*1\.0/.test(src));
+chk('P 에 snowSize 가 있다', /snowSize\s*:\s*1\.0/.test(src));
+chk('패널에 비 크기 칸이 있다', /'rainSize',\s*'비 크기'/.test(src));
+chk('패널에 눈 크기 칸이 있다', /'snowSize',\s*'눈 크기'/.test(src));
+const rainLenOf = f => Math.abs(f.rain[0][1][1] - f.rain[0][0][1]);
+box.P.precipTest = 1;
+const s11 = frame(-20, -90, 6, 0);                          // 비, 둘 다 1배
+box.P.rainSize = 3;   const s31 = frame(-20, -90, 6, 0);    // 비만 3배
+box.P.rainSize = 1;
+box.P.precipTest = 2;
+const n11 = frame(-20, -90, 6, 0);                          // 눈, 둘 다 1배
+box.P.snowSize = 3;   const n13 = frame(-20, -90, 6, 0);    // 눈만 3배
+box.P.rainSize = 3;   box.P.precipTest = 1;
+const s33 = frame(-20, -90, 6, 0);                          // 비 3배 (눈도 3배인 채)
+box.P.rainSize = 1;   box.P.snowSize = 1;   box.P.precipTest = 0;
+console.log('  빗줄기  1배 ' + rainLenOf(s11).toFixed(1) + 'px -> rainSize 3배 ' +
+            rainLenOf(s31).toFixed(1) + 'px | 눈 반지름  1배 ' +
+            n11.snow[0][2] + 'px -> snowSize 3배 ' + n13.snow[0][2] + 'px');
+chk('빗줄기가 rainSize 대로 길어진다', Math.abs(rainLenOf(s31)/rainLenOf(s11) - 3) < 0.01);
+chk('눈송이가 snowSize 대로 커진다', Math.abs(n13.snow[0][2]/n11.snow[0][2] - 3) < 0.01);
+chk('snowSize 는 빗줄기를 건드리지 않는다', rainLenOf(s33) === rainLenOf(s31),
+    rainLenOf(s33).toFixed(1) + 'px (snowSize 3 인 채로 같음)');
+chk('기본값 1 은 이전 그림 그대로다', rainLenOf(s11) === 13 && n11.snow[0][2] === 1.5,
+    rainLenOf(s11) + 'px / ' + n11.snow[0][2] + 'px');
+
+// ===== 7-3. 비 하늘의 그늘 =====
+// 비가 온다는 것은 먹구름이 해를 가렸다는 뜻이다. 비면 화면 전체에 어두운
+// 그늘 한 장이 깔리고, 눈이면 여기서는 아무 막도 깔지 않는다 — 눈 하늘의
+// 밝은 장막은 cloudVeil 의 몫이라 이 harness 바깥이다.
+console.log('\n=== 7-3. 그늘 ===');
+box.P.precipTest = 1;
+const gR = frame(-20, -90, 6, 0);
+box.P.precipTest = 2;
+const gS = frame(-20, -90, 6, 0);
+box.P.precipTest = 0;
+const gN = frame(-20, -90, 6, 0);
+const gloom = gR.fills.find(f => f[4] && f[4].indexOf('22,27,36') >= 0);
+console.log('  비 그늘: ' + (gloom ? gloom[4] : '(없음)'));
+chk('비면 화면 전체에 그늘을 깐다', !!gloom &&
+    gloom[0] === 0 && gloom[1] === 0 && gloom[2] === box.W && gloom[3] === box.H);
+chk('그늘의 짙기가 세기 1 기준값이다', !!gloom && /0\.380/.test(gloom[4]));
+chk('눈이면 여기서는 막을 깔지 않는다', gS.fills.length === 0);
+chk('안 내리면 그늘도 없다', gN.fills.length === 0);
+
+// ===== 7-4. 폭우 (기상 시험 3) =====
+// 폭우는 비의 극단이다. 방울 수는 같되(둘 다 세기 1), 줄기가 1.6배 길고
+// 1.5배 빨리 떨어지며 그늘이 0.38 → 0.58 로 짙어진다.
+console.log('\n=== 7-4. 폭우 ===');
+box.P.precipTest = 3;
+const h0 = frame(-20, -90, 6, 0);
+const h1 = frame(-20, -90, 6, 0.01);
+box.P.precipTest = 1;
+const r0 = frame(-20, -90, 6, 0);
+const r1 = frame(-20, -90, 6, 0.01);
+box.P.precipTest = 0;
+chk('폭우도 비다 — 방울 수가 같다', h0.rain.length === r0.rain.length,
+    h0.rain.length + '개');
+chk('줄기가 1.6배 길다',
+    Math.abs(rainLenOf(h0)/rainLenOf(r0) - 1.6) < 0.01,
+    rainLenOf(r0).toFixed(1) + 'px -> ' + rainLenOf(h0).toFixed(1) + 'px');
+const fallOf = (a, b) => {
+  let s = 0, n = 0;
+  for(let i = 0; i < a.rain.length; i++){
+    const d = b.rain[i][0][1] - a.rain[i][0][1];
+    if(d > 0){ s += d; n++; }
+  }
+  return s/n/0.01;
+};
+const fH = fallOf(h0, h1), fR = fallOf(r0, r1);
+chk('1.5배 빨리 떨어진다', Math.abs(fH/fR - 1.5) < 0.03,
+    fR.toFixed(0) + ' -> ' + fH.toFixed(0) + ' px/초');
+const hG = h0.fills.find(f => f[4] && f[4].indexOf('22,27,36') >= 0);
+chk('그늘이 폭우값으로 짙다', !!hG && /0\.580/.test(hG[4]),
+    hG ? hG[4] : '(없음)');
 
 // ===== 8. 화면을 벗어나지 않는가 =====
 // 화면 밖에 그리면 보이지 않을 뿐 값은 낭비된다. 빗줄기 길이만큼의
@@ -243,8 +336,8 @@ frame(15, 90, 6, 0);
 calls = box.COUNT;
 console.log('  한 프레임에 precipAt 호출 ' + calls + '회 (방울 ' +
             vm.runInContext('PRECIP_N', box) + '개 x 비/눈 2회전)');
-chk('호출 수가 방울 수의 두 배를 넘지 않는다',
-    calls <= vm.runInContext('PRECIP_N', box)*2, calls + '회');
+chk('호출 수가 방울 수의 두 배 + 그늘 표본을 넘지 않는다',
+    calls <= vm.runInContext('PRECIP_N', box)*2 + 2, calls + '회');
 
 console.log('\n' + '='.repeat(46));
 console.log('  통과 ' + pass + ' / 실패 ' + fail);

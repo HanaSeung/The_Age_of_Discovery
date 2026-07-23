@@ -37,6 +37,7 @@ chk('별 관측이 같은 하늘을 본다 (skyClearAt)',
 chk('별 쪽의 옛 인라인 계산이 사라졌다',
     !/night \* \(1 - Math\.min\(1, cloudOpacityAt/.test(src));
 chk('시야도 같은 하늘을 본다', /const cloud = 1 - skyClearAt\(ship\.x, ship\.y\)/.test(src));
+chk('내리는 동안은 하늘이 닫힌다 (skyClearAt=0)', /if\(p\.rate > 0\) return 0;/.test(src));
 
 // ===== 2. 떼어내 돌린다 =====
 console.log('\n=== 2. 코드 추출 ===');
@@ -85,6 +86,18 @@ function S(dark, cloud, rain, sight, p){
   return r;
 }
 
+// ===== 2-2. 하늘이 닫히는가 =====
+// 별 관측이 쓰는 바로 그 함수. 내리기 시작하면 구름 틈이 얼마든 0 이 된다 —
+// "눈 오는 밤 별하늘" 은 없다.
+console.log('\n=== 2-2. 하늘 ===');
+box.CLOUD = 0.3; box.RAIN = 0;
+chk('맑은 하늘은 구름만큼만 닫힌다',
+    near(vm.runInContext('skyClearAt(0,0)', box), 0.7));
+box.RAIN = 0.6;
+chk('내리는 동안은 완전히 닫힌다 — 별 전멸',
+    vm.runInContext('skyClearAt(0,0)', box) === 0);
+box.CLOUD = 0; box.RAIN = 0;
+
 // ===== 3. 곱이 맞는가 =====
 console.log('\n=== 3. 셈 ===');
 const day = S(0, 0, 0);
@@ -94,14 +107,17 @@ const nite = S(1, 0, 0);
 chk('완전한 밤 홀로 = 15%', near(nite.f, 0.15), (nite.f*100).toFixed(1) + '%');
 const cld = S(0, 1, 0);
 chk('짙은 구름 홀로 = 65%', near(cld.f, 0.65), (cld.f*100).toFixed(1) + '%');
+// 비가 오면 하늘은 덮인 것으로 친다(skyClearAt=0) — 구름 몫이 저절로 가득
+// 찬다. 그래서 '비 홀로' 는 이제 없다. 비 = 비 + 짙은 구름이다.
 const rn = S(0, 0, 1);
-chk('세찬 비 홀로 = 50%', near(rn.f, 0.50), (rn.f*100).toFixed(1) + '%');
+chk('세찬 비 = 비 50% × 구름 65% = 32.5%', near(rn.f, 0.65*0.50),
+    (rn.f*100).toFixed(1) + '%');
 const all = S(1, 1, 1);
 chk('셋이 겹치면 곱이다 (0.15×0.65×0.50)', near(all.f, 0.15*0.65*0.50),
     (all.f*100).toFixed(2) + '% → ' + all.km.toFixed(2) + ' km');
 const half = S(0.5, 0.5, 0.5);
-chk('절반씩이면 절반씩 깎는다',
-    near(half.f, (1-0.425)*(1-0.175)*(1-0.25)), (half.f*100).toFixed(1) + '%');
+chk('반쯤 오는 비도 하늘은 통째로 닫는다',
+    near(half.f, (1-0.425)*(1-0.35)*(1-0.25)), (half.f*100).toFixed(1) + '%');
 
 // ===== 4. 바닥 =====
 console.log('\n=== 4. 바닥 ===');

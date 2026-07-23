@@ -229,6 +229,26 @@ const untouched = vm.runInContext('cloudImg.data[3]', sandbox);
 chk('구름 표현 0 이면 아무것도 하지 않는다', untouched === 77,
     `표시값 77 이 ${untouched} 로 남음`);
 
+console.log('\n=== 5-2. 눈 하늘 ===');
+// 눈이 내리는 하늘은 시커먼 덩어리가 아니라 희부연 장막 한 장이다. 강제
+// 강수(비눈 시험 2)로 눈을 만들어 넣고, 덩어리 셈이 통째로 건너뛰는지
+// 알파에 표시를 남겨 확인한다. 비(시험 1)면 덩어리가 그대로 살아야 한다.
+vm.runInContext(`(function(){
+  P.cloudMode = 2;
+  const d = cloudImg.data;
+  for(let p = 3; p < d.length; p += 4) d[p] = 88;
+  P.precipTest = 2; cloudVeil();
+})()`, sandbox);
+chk('눈이면 덩어리를 그리지 않는다',
+    vm.runInContext('cloudImg.data[3]', sandbox) === 88, '표시값 88 유지');
+chk('눈이면 격자 셈이 0 이다', vm.runInContext('cloudNCell', sandbox) === 0);
+vm.runInContext('P.precipTest = 1; cloudVeil();', sandbox);
+chk('비면 덩어리 셈이 살아 있다', vm.runInContext('cloudNCell', sandbox) > 0,
+    vm.runInContext('cloudNCell', sandbox) + '칸');
+vm.runInContext('P.precipTest = 0;', sandbox);
+chk('장막 분기가 배선되어 있다',
+    /PRECIP_SNOW && precipHere\.rate > 0/.test(html) && /SNOW_SKY/.test(html));
+
 console.log('\n=== 6. 화면을 빈틈없이 덮는가 ===');
 // 표본은 칸의 모서리에 있으므로 반 칸씩 밀어 그려야 한다. 밀지 않으면
 // 왼쪽·위 가장자리에 반 칸 폭의 띠가 남는다. 눈으로는 놓치기 쉬운 자국이다.

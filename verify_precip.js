@@ -75,7 +75,8 @@ chk('PRECIP 상수를 떼어냈다', precipC.length > 0);
 if(!precipFn || !precipMod || !airMod){ console.log('\n추출 실패로 중단.'); process.exit(1); }
 
 const box = { Math, console, atob: s => Buffer.from(s, 'base64').toString('binary'),
-              window: {}, Uint8Array, gameDay: 0, HERE: 1 };
+              window: {}, Uint8Array, gameDay: 0, HERE: 1,
+              P: { precipTest: 0 } };
 vm.createContext(box);
 vm.runInContext(fs.readFileSync(D + 'precip_data.js', 'utf8'), box);
 vm.runInContext(fs.readFileSync(D + 'airtemp_data.js', 'utf8'), box);
@@ -214,6 +215,27 @@ console.log('  표본 ' + total + '칸 중 세기 0.5 이상 ' + wetCells + '칸
 chk('온 세상이 비는 아니다', wetCells/total < 0.35);
 chk('비 오는 곳이 아예 없지는 않다', wetCells > 0);
 chk('상한 1 에 닿는 곳이 있다', hi > 0.85, hi.toFixed(3));
+
+// ===== 8. 시험 손잡이 (precipTest) =====
+// 실측을 제쳐 두고 강제로 내리게 하는 손잡이. 구름이 없어도, 지구에서 가장
+// 메마른 바다에서도 내려야 시험 단추 노릇을 한다.
+console.log('\n=== 8. 시험 손잡이 ===');
+chk('P 에 precipTest 가 있다', /precipTest\s*:\s*0/.test(src));
+chk('패널에 기상 시험 칸이 있다', /'precipTest','기상 시험'/.test(src));
+box.P.precipTest = 1;
+const tR = P(-20, -90, 6, 0);          // 페루 앞바다, 구름 0 — 최악의 조건
+chk('시험 1 이면 맨하늘 건조대에도 비가 온다', tR.type === 1 && tR.rate === 1,
+    NAME[tR.type] + ' 세기 ' + tR.rate);
+box.P.precipTest = 2;
+const tS = P(-20, -90, 6, 0);
+chk('시험 2 면 눈이 온다', tS.type === 2 && tS.rate === 1);
+box.P.precipTest = 3;
+const tH = P(-20, -90, 6, 0);
+chk('시험 3(폭우)도 판정은 비다', tH.type === 1 && tH.rate === 1,
+    '몸집 차이는 그리기(precipVeil) 쪽 검사');
+box.P.precipTest = 0;
+const tOff = P(-20, -90, 6, 0);
+chk('시험을 끄면 실측으로 돌아온다', tOff.type === 0 && tOff.rate === 0);
 
 console.log('\n' + '='.repeat(46));
 console.log('  통과 ' + pass + ' / 실패 ' + fail);
