@@ -744,6 +744,10 @@ const P = {
   precipGain: 1.0,    // 강수 표현의 세기 (0 = 안 보임, 1 = 기준)
                       //   방울 수와 진하기를 함께 올린다. 실제 강수량은 실측
                       //   자료가 정하므로 이 값은 눈에 보이는 정도만 바꾼다.
+  // 시야를 깎는 몫 (0 = 안 깎음, 1 = 통째로 깎음). 감시범위에 곱한다.
+  visNight  : 0.85,   // 완전한 밤이면 시야가 15% 로 준다
+  visCloud  : 0.35,   // 하늘이 완전히 덮이면 65% 로
+  visRain   : 0.50,   // 세찬 비면 50% 로 — 셋이 겹치면 곱해서 5% 까지 간다
   starMode  : 1,      // 별: 0 끄기 · 1 켜기
   starCount : 500,    // 그릴 별의 수 (밝은 것부터) — 최대 904
   starGain  : 1.0,    // 별의 밝기
@@ -1599,6 +1603,44 @@ function precipVeil(){
   }
 }
 
+// ===== 시야 — 지금 얼마나 멀리 보이는가 =====
+// 감시범위(s:sight)는 지금까지 표시만 되고 아무 데도 쓰이지 않았다. 여기서
+// 처음으로 값이 된다. 맑은 대낮의 기준 거리에 밤·구름·비가 각자 깎는 몫을
+// 곱해 '지금 실제로 보이는 거리'를 만든다.
+//
+// 곱으로 엮는 이유: 흐린 밤비는 셋 중 하나만 있을 때보다 훨씬 나쁘고, 그
+// '훨씬'이 곱에서 저절로 나온다. 완전한 밤(0.85 깎음) × 짙은 구름(0.35) ×
+// 세찬 비(0.50)면 15% × 65% × 50% ≈ 5% — 20km 가 1km 로 준다. 돛대 위
+// 파수꾼이 폭풍우 치는 밤에 보는 딱 그만큼이다.
+//
+// 깎는 몫 셋은 조정 패널에 열어 둔다. 게임 감각의 문제라 숫자로 확정할 수
+// 없고, 항해해 보고 값이 정해지면 그때 굳힌다.
+//
+// 아직 이 값을 쓰는 게임 규칙(발견·조우·좌초 경고)은 없다. 이 단계는 값을
+// 만들고 보여주는 데까지다 — 규칙이 들어올 때 읽을 자리는 sightNow 하나다.
+const SIGHT_MIN = 0.5;    // 아무리 캄캄해도 뱃전은 보인다 (km)
+
+// 머리 위 하늘이 얼마나 열려 있는가 (0 = 완전히 덮임, 1 = 맑음).
+// 별 관측과 시야가 같은 하늘을 봐야 하므로 한 군데로 모았다 — 구름에 별이
+// 가렸는데 시야는 멀쩡하면 이상하다.
+function skyClearAt(wx, wy){
+  return 1 - Math.min(1, cloudOpacityAt(wx, wy));
+}
+
+const sightNow = { factor:1, km:20, dark:0, cloud:0, rain:0 };
+function updateSight(){
+  const dark  = darkness(sunAlt(ship.x, ship.y));
+  const cloud = 1 - skyClearAt(ship.x, ship.y);
+  precipAt(ship.x, ship.y, precipHere);
+  const rain  = precipHere.rate;
+  const f = (1 - dark *Math.min(1, P.visNight))
+          * (1 - cloud*Math.min(1, P.visCloud))
+          * (1 - rain *Math.min(1, P.visRain));
+  sightNow.dark = dark; sightNow.cloud = cloud; sightNow.rain = rain;
+  sightNow.factor = f;
+  sightNow.km = Math.max(SIGHT_MIN, SHIP.spec.sight * f);
+}
+
 // ===== 별 — 밤하늘 =====
 // 화면 전체를 '올려다본 하늘' 로 읽는다. 가운데가 천정, 가장자리가 지평선이다.
 // 지도 배율과는 무관하다 — 지도를 확대한다고 별이 커지지는 않으니까.
@@ -1619,7 +1661,8 @@ function starVeil(){
   const night = darkness(sunAlt(ship.x, ship.y));        // 0 낮 ~ 1 완전한 밤
   if(night <= 0.02) return;
   // 머리 위 구름. 별은 배에서 올려다보는 것이라 배가 선 자리 한 점만 본다.
-  const vis = night * (1 - Math.min(1, cloudOpacityAt(ship.x, ship.y))) * P.starGain;
+  // 하늘이 열린 정도는 시야 계산과 같은 자리(skyClearAt)에서 읽는다.
+  const vis = night * skyClearAt(ship.x, ship.y) * P.starGain;
   if(vis <= 0.015) return;
 
   const lon = (wrapX(ship.x)/WORLD_W*360 - 180) * Math.PI/180;
@@ -1759,6 +1802,9 @@ const TUNE = (function(){
     ['cloudDrift','구름 속도',   0,    3,  0.1, '배',   1],
     ['precipMode','비눈 표현',   0,    1,  1,   '',     0],
     ['precipGain','비눈 세기',   0,    2,  0.05,'배',   2],
+    ['visNight',  '시야:밤',     0,    1,  0.05,'깎음', 2],
+    ['visCloud',  '시야:구름',   0,    1,  0.05,'깎음', 2],
+    ['visRain',   '시야:비눈',   0,    1,  0.05,'깎음', 2],
     ['starMode',  '별 표현',     0,    1,  1,   '',     0],
     ['starCount', '별 개수',   100,  904,  20,  '개',   0],
     ['starGain',  '별 밝기',     0,    2,  0.05,'배',   2],
@@ -1969,7 +2015,10 @@ const TUNE = (function(){
       row('내구도', R(t.hull)+' <i>/ '+s.hullMax+'</i>', t.hull/s.hullMax, t0.hull/s.hullMax, '#e8b04b')+
       // 흘수만 뒤집는다. 얕을수록 좋은 값이라, 안 뒤집으면 일곱 줄 중 하나만 뜻이 반대가 된다.
       row('흘수', s.draft.toFixed(1), 1-rng('s:draft', s.draft), 1-rng('s:draft', s0.draft), SC)+
-      row('감시범위', R(s.sight), rng('s:sight', s.sight), rng('s:sight', s0.sight), SC)+
+      // 감시범위만 두 값을 보인다 — 앞이 지금 실제로 보이는 거리(밤·구름·비가
+      // 깎은 뒤), 뒤가 맑은 대낮의 기준. 막대는 실효값, 눈금은 기준 자리다.
+      row('감시범위', R(sightNow.km)+' <i>/ '+R(s.sight)+' km</i>',
+          rng('s:sight', sightNow.km), rng('s:sight', s.sight), SC)+
       row('승무원', R(t.crew)+' <i>/ '+s.crewMax+'</i>', t.crew/s.crewMax, t0.crew/s.crewMax, '#8fd3e8')+
       row('컨디션', R(mor)+' <i>/ 100</i>', mor/100, t0.morale/100, morC)+
       '<h4>물자</h4>'+
@@ -2092,6 +2141,7 @@ function loop(now){
     update(dt);
     CURVIZ.step(dt);
   }
+  updateSight();   // 멈춰 있어도 시야는 잰다 — 패널이 열려 있으면 값이 보이므로
   // 배경(해도 밖 = 미지의 바다)
   ctx.setTransform(DPR,0,0,DPR,0,0);
   ctx.fillStyle=VOID; ctx.fillRect(0,0,W,H);
