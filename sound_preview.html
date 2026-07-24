@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>소리 미리듣기 — 비 · 폭풍 · 천둥</title>
+<style>
+  /* 게임(world_chart)의 어두운 해도 분위기를 따른다 */
+  body{ margin:0; padding:24px; background:#0d1420; color:#d8cfb8;
+        font:14px/1.6 'Malgun Gothic', sans-serif; transition:background 0.06s; }
+  body.flash{ background:#7286a8; }
+  h1{ font-size:18px; color:#e8dfc8; margin:0 0 4px; }
+  .sub{ color:#8a8270; font-size:12px; margin-bottom:20px; }
+  .card{ background:#131c2b; border:1px solid #2a3648; border-radius:8px;
+         padding:14px 18px; margin-bottom:14px; max-width:640px; }
+  .card h2{ font-size:15px; margin:0 0 10px; color:#c9bfa4; }
+  button{ background:#2a3648; color:#e8dfc8; border:1px solid #3d4d66;
+          border-radius:6px; padding:7px 16px; font-size:14px; cursor:pointer;
+          margin-right:8px; }
+  button:hover{ background:#35455e; }
+  button.on{ background:#5a7a4a; border-color:#7a9a6a; }
+  .row{ display:flex; align-items:center; gap:10px; margin:7px 0; }
+  .row label{ width:110px; color:#a89f88; font-size:13px; }
+  .row input[type=range]{ flex:1; }
+  .row .val{ width:64px; text-align:right; font-family:Consolas,monospace;
+             color:#e8dfc8; font-size:13px; }
+  #summary{ font-family:Consolas,monospace; font-size:12px; color:#9ab08a;
+            white-space:pre; background:#0f1622; border:1px solid #2a3648;
+            border-radius:6px; padding:10px 14px; }
+  .hint{ color:#8a8270; font-size:12px; margin-top:6px; }
+</style>
+</head>
+<body>
+<h1>소리 미리듣기</h1>
+<div class="sub">비 · 폭풍 · 천둥 — 음원 파일 없이 코드로 합성한다. 여기서 들어보고
+정한 숫자를 게임에 그대로 이식한다. (첫 클릭 전에는 브라우저가 소리를 막는다)</div>
+
+<div class="card">
+  <h2>비</h2>
+  <button id="bRain">비 켬</button>
+  <div class="row"><label>세기</label>
+    <input type="range" id="rRate" min="0" max="1" step="0.05" value="0.6">
+    <span class="val" id="vRate"></span></div>
+  <div class="row"><label>밝기</label>
+    <input type="range" id="rBright" min="0.5" max="2" step="0.05" value="1">
+    <span class="val" id="vBright"></span></div>
+  <div class="hint">세기는 게임의 강수 세기(rate 0~1)에 물릴 값. 밝기는 굵은 비의
+  솨아― 하는 고음이 얼마나 사는가.</div>
+</div>
+
+<div class="card">
+  <h2>폭풍 (바람의 울부짖음)</h2>
+  <button id="bStorm">폭풍 켬</button>
+  <div class="row"><label>바람 세기</label>
+    <input type="range" id="rWind" min="0" max="1" step="0.05" value="0.7">
+    <span class="val" id="vWind"></span></div>
+  <div class="row"><label>울음 높이</label>
+    <input type="range" id="rHowl" min="150" max="900" step="10" value="420">
+    <span class="val" id="vHowl"></span></div>
+  <div class="row"><label>흔들림</label>
+    <input type="range" id="rWander" min="0" max="1" step="0.05" value="0.6">
+    <span class="val" id="vWander"></span></div>
+  <div class="row"><label>공명</label>
+    <input type="range" id="rQ" min="1" max="10" step="0.5" value="4">
+    <span class="val" id="vQ"></span></div>
+  <div class="row"><label>자동 천둥</label>
+    <input type="checkbox" id="cAuto" checked>
+    <span class="hint" style="margin:0">폭풍이 켜져 있으면 5~12초마다 번개(화면 번쩍)와 천둥</span></div>
+  <div class="hint">폭풍을 켜면 비도 최대로 함께 켠다 — 게임의 inStorm() 과 같은 결합.</div>
+</div>
+
+<div class="card">
+  <h2>천둥</h2>
+  <button id="bThunder">천둥 치기</button>
+  <div class="row"><label>낮음</label>
+    <input type="range" id="rLow" min="60" max="400" step="5" value="170">
+    <span class="val" id="vLow"></span></div>
+  <div class="row"><label>길이</label>
+    <input type="range" id="rDur" min="1" max="6" step="0.1" value="3.2">
+    <span class="val" id="vDur"></span></div>
+  <div class="row"><label>우르릉 흔들림</label>
+    <input type="range" id="rWob" min="0" max="1" step="0.05" value="0.55">
+    <span class="val" id="vWob"></span></div>
+  <div class="row"><label>씨앗</label>
+    <input type="range" id="rSeed" min="1" max="99" step="1" value="7">
+    <span class="val" id="vSeed"></span></div>
+  <div class="hint">씨앗이 같으면 같은 천둥 — 게임의 번개 줄기(boltPath)와 같은 수법.
+  낮음은 우르릉의 무게, 흔들림은 구르는 느낌.</div>
+</div>
+
+<div class="card">
+  <h2>공통</h2>
+  <div class="row"><label>주 음량</label>
+    <input type="range" id="rVol" min="0" max="1" step="0.05" value="0.7">
+    <span class="val" id="vVol"></span></div>
+</div>
+
+<div class="card">
+  <h2>지금 값 (이대로 알려 주시면 게임에 이식)</h2>
+  <div id="summary"></div>
+</div>
+
+<script>
+"use strict";
+// ===== 소리 합성 — 게임에 그대로 이식할 코드 =====
+// 음원 파일이 없다. 브라우저에 내장된 신시사이저(Web Audio)로 세 소리를
+// 코드로 만든다. 이 프로젝트가 이미지 없이 코드와 데이터로만 굴러온 것과
+// 같은 이유다 — 외부 파일도, 용량도, 저작권도 없다.
+//
+// 브라우저는 사용자가 한 번 조작하기 전에는 소리를 막는다(자동재생 차단).
+// 그래서 오디오는 첫 클릭 때 깨어난다.
+let AC = null, master = null;
+let rainSrc = null, rainLP = null, rainHP = null, rainGain = null;
+let windSrc = null, windBP = null, windGain = null, lfo = null, lfoGain = null;
+let gust = null, gustGain = null;
+
+// 2초짜리 백색 잡음 한 덩어리. 이어 붙여 돌리면 끊김 없이 계속 나온다.
+function noiseBuffer(){
+  const n = AC.sampleRate * 2;
+  const buf = AC.createBuffer(1, n, AC.sampleRate);
+  const d = buf.getChannelData(0);
+  for(let i = 0; i < n; i++) d[i] = Math.random()*2 - 1;
+  return buf;
+}
+
+function wake(){
+  if(AC) return;
+  AC = new (window.AudioContext || window.webkitAudioContext)();
+  master = AC.createGain();
+  master.gain.value = V('rVol');
+  master.connect(AC.destination);
+
+  // --- 비: 잡음 -> 저음 자르기(웅웅 제거) -> 고음 깎기 -> 음량 ---
+  // 잡음에서 저음을 걷어내고 고음을 깎으면 그대로 빗소리다. 세기가 커지면
+  // 음량과 함께 깎는 문턱도 올라간다 — 굵은 비의 솨아― 하는 고음이 산다.
+  rainSrc = AC.createBufferSource();
+  rainSrc.buffer = noiseBuffer(); rainSrc.loop = true;
+  rainHP = AC.createBiquadFilter(); rainHP.type = 'highpass'; rainHP.frequency.value = 320;
+  rainLP = AC.createBiquadFilter(); rainLP.type = 'lowpass';
+  rainGain = AC.createGain(); rainGain.gain.value = 0;
+  rainSrc.connect(rainHP); rainHP.connect(rainLP);
+  rainLP.connect(rainGain); rainGain.connect(master);
+  rainSrc.start();
+
+  // --- 바람: 잡음 -> 좁은 띠만 통과(공명) -> 음량. 띠의 높이가 천천히
+  //     오르내리면 우우웅― 하는 울부짖음이 된다 ---
+  windSrc = AC.createBufferSource();
+  windSrc.buffer = noiseBuffer(); windSrc.loop = true;
+  windBP = AC.createBiquadFilter(); windBP.type = 'bandpass';
+  windGain = AC.createGain(); windGain.gain.value = 0;
+  windSrc.connect(windBP); windBP.connect(windGain); windGain.connect(master);
+  windSrc.start();
+  lfo = AC.createOscillator(); lfo.frequency.value = 0.13;      // 울음의 오르내림
+  lfoGain = AC.createGain();
+  lfo.connect(lfoGain); lfoGain.connect(windBP.frequency);
+  lfo.start();
+  gust = AC.createOscillator(); gust.frequency.value = 0.05;    // 돌풍의 밀물썰물
+  gustGain = AC.createGain();
+  gust.connect(gustGain); gustGain.connect(windGain.gain);
+  gust.start();
+  apply();
+}
+document.addEventListener('pointerdown', wake, { once:true });
+
+// ===== 천둥 =====
+// 미리 만든 파형 한 덩어리를 터뜨린다. 씨앗 하나로 전체가 정해진다 —
+// 게임의 번개 줄기(boltPath)와 같은 수법이라, 같은 씨앗이면 같은 천둥이다.
+// 짜임새: 처음 60ms 의 '쩌적'(밝은 잡음) + 그 뒤로 길게 사그라드는
+// '우르릉'(저음 잡음 × 느리게 출렁이는 봉투).
+function makeThunder(seed, lowHz, dur, wobble){
+  let s = seed >>> 0 || 1;
+  const rnd = () => (s = (s*1664525 + 1013904223) >>> 0) / 4294967296;
+  const sr = AC.sampleRate, n = Math.floor(sr*(dur + 0.3));
+  const buf = AC.createBuffer(1, n, sr);
+  const d = buf.getChannelData(0);
+  // 저음만 남기는 한극 필터. 계수가 작을수록 무겁다.
+  const a = Math.min(0.5, lowHz / sr * 6.28);
+  let y = 0;
+  // 우르릉의 출렁임 — 150ms 마다 새 목표를 뽑아 그 사이를 잇는다.
+  // 파형은 dur 보다 0.3초 길므로 그만큼 넉넉히 뽑아야 꼬리에서 모자라지 않는다.
+  const segN = Math.ceil((dur + 0.3)/0.15) + 2, seg = [];
+  for(let i = 0; i < segN; i++) seg.push(1 - wobble*rnd());
+  let peak = 0;
+  for(let i = 0; i < n; i++){
+    const t = i/sr;
+    const x = rnd()*2 - 1;
+    y += a*(x - y);                                    // 저음 우르릉
+    const k = t/0.15, k0 = Math.floor(k);
+    const und = seg[k0] + (seg[k0+1] - seg[k0])*(k - k0);   // 출렁임
+    const rumble = y * Math.exp(-t/(dur*0.42)) * und;
+    const crack  = (t < 0.06) ? x * (1 - t/0.06) * 0.55 : 0;  // 첫 쩌적
+    d[i] = rumble*3.2 + crack;
+    const ab = Math.abs(d[i]); if(ab > peak) peak = ab;
+  }
+  for(let i = 0; i < n; i++) d[i] /= peak;             // 넘치지 않게
+  return buf;
+}
+
+function thunder(){
+  wake();
+  const src = AC.createBufferSource();
+  src.buffer = makeThunder(V('rSeed'), V('rLow'), V('rDur'), V('rWob'));
+  const g = AC.createGain(); g.gain.value = 0.9;
+  src.connect(g); g.connect(master);
+  src.start();
+  // 화면도 한 번 번쩍 — 게임에서는 lightningVeil 이 이 순간을 정한다
+  document.body.classList.add('flash');
+  setTimeout(() => document.body.classList.remove('flash'), 90);
+}
+
+// ===== 손잡이 -> 소리 =====
+// 게임에서는 세기 자리에 강수 세기(rate)가, 폭풍 자리에 inStorm() 이 들어온다.
+const $ = id => document.getElementById(id);
+const V = id => parseFloat($(id).value);
+let rainOn = false, stormOn = false, autoTimer = null;
+
+function apply(){
+  if(!AC) return;
+  const t = AC.currentTime + 0.06;
+  master.gain.linearRampToValueAtTime(V('rVol'), t);
+  // 비 — 폭풍이면 세기를 최대로 끌어올린다 (게임의 결합과 같게)
+  const rate = stormOn ? 1 : (rainOn ? V('rRate') : 0);
+  rainGain.gain.linearRampToValueAtTime(Math.pow(rate, 1.6)*0.5, t);
+  rainLP.frequency.linearRampToValueAtTime((900 + 2600*rate)*V('rBright'), t);
+  // 바람 — 폭풍일 때만
+  const w = stormOn ? V('rWind') : 0;
+  windGain.gain.cancelScheduledValues(0);
+  windGain.gain.linearRampToValueAtTime(w*0.30, t);
+  windBP.frequency.linearRampToValueAtTime(V('rHowl'), t);
+  windBP.Q.linearRampToValueAtTime(V('rQ'), t);
+  lfoGain.gain.linearRampToValueAtTime(V('rHowl')*0.55*V('rWander'), t);
+  gustGain.gain.linearRampToValueAtTime(w*0.10, t);
+  summary();
+}
+
+function schedule(){                       // 폭풍 자동 천둥: 5~12초 뒤 다음 것
+  clearTimeout(autoTimer);
+  if(!(stormOn && $('cAuto').checked)) return;
+  autoTimer = setTimeout(() => {
+    $('rSeed').value = 1 + Math.floor(Math.random()*99);
+    thunder(); paint(); schedule();
+  }, (5 + Math.random()*7)*1000);
+}
+
+$('bRain').onclick = () => { wake(); rainOn = !rainOn;
+  $('bRain').classList.toggle('on', rainOn);
+  $('bRain').textContent = rainOn ? '비 끔' : '비 켬'; apply(); };
+$('bStorm').onclick = () => { wake(); stormOn = !stormOn;
+  $('bStorm').classList.toggle('on', stormOn);
+  $('bStorm').textContent = stormOn ? '폭풍 끔' : '폭풍 켬'; apply(); schedule(); };
+$('bThunder').onclick = thunder;
+$('cAuto').onchange = schedule;
+
+function paint(){
+  const F = { rRate:2, rBright:2, rWind:2, rWander:2, rQ:1, rWob:2, rVol:2,
+              rHowl:0, rLow:0, rDur:1, rSeed:0 };
+  for(const id in F) $('v' + id.slice(1)).textContent = V(id).toFixed(F[id]);
+}
+function summary(){
+  $('summary').textContent =
+    '비    세기 '   + V('rRate').toFixed(2)  + '  밝기 ' + V('rBright').toFixed(2) + '\n' +
+    '바람  세기 '   + V('rWind').toFixed(2)  + '  높이 ' + V('rHowl').toFixed(0) +
+    'Hz  흔들림 '   + V('rWander').toFixed(2)+ '  공명 ' + V('rQ').toFixed(1) + '\n' +
+    '천둥  낮음 '   + V('rLow').toFixed(0)   + 'Hz  길이 ' + V('rDur').toFixed(1) +
+    's  흔들림 '    + V('rWob').toFixed(2)   + '  씨앗 ' + V('rSeed').toFixed(0) + '\n' +
+    '음량  '        + V('rVol').toFixed(2);
+}
+document.querySelectorAll('input[type=range]').forEach(el =>
+  el.oninput = () => { paint(); apply(); });
+paint(); summary();
+</script>
+
+</body>
+</html>

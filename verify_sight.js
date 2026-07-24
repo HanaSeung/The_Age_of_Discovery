@@ -38,6 +38,12 @@ chk('별 쪽의 옛 인라인 계산이 사라졌다',
     !/night \* \(1 - Math\.min\(1, cloudOpacityAt/.test(src));
 chk('시야도 같은 하늘을 본다', /const cloud = 1 - skyClearAt\(ship\.x, ship\.y\)/.test(src));
 chk('내리는 동안은 하늘이 닫힌다 (skyClearAt=0)', /if\(p\.rate > 0\) return 0;/.test(src));
+chk('폭풍 판정이 한 함수다 (inStorm)', /function inStorm\(\)/.test(src));
+chk('어둠이 한 함수를 거친다 (darknessNow)', (function(){
+  // 밤막·시야·별 셋 다 darknessNow 를 읽어야 폭풍이 한꺼번에 입혀진다
+  return (src.match(/darknessNow\(\)/g) || []).length >= 3 &&
+         !/darkness\(sunAlt\(ship\.x, ship\.y\)\)\s*\*\s*P\.nightGain/.test(src);
+})());
 
 // ===== 2. 떼어내 돌린다 =====
 console.log('\n=== 2. 코드 추출 ===');
@@ -62,7 +68,7 @@ if(!upFn || !skyFn){ console.log('\n추출 실패로 중단.'); process.exit(1);
 
 // 입력 셋(밤·구름·비)은 이 스크립트가 쥔다. 실제 자료 쪽은 verify_precip 과
 // verify_cloudviz 가 이미 검사하므로, 여기서 볼 것은 셋을 엮는 셈뿐이다.
-const box = { Math, DARK: 0, CLOUD: 0, RAIN: 0,
+const box = { Math, DARK: 0, CLOUD: 0, RAIN: 0, STORM: false,
               SHIP: { spec: { sight: 20 } },
               ship: { x: 0, y: 0 },
               P: { visNight: 0.85, visCloud: 0.35, visRain: 0.50 },
@@ -73,6 +79,9 @@ vm.runInContext([
   'function sunAlt(x, y){ return 0; }',
   'function cloudOpacityAt(x, y){ return CLOUD; }',
   'function precipAt(x, y, out){ out.rate = RAIN; out.type = RAIN > 0 ? 1 : 0; return out; }',
+  // 폭풍 판정은 이 스크립트가 쥔다. 실제 조건(기상 시험/폭풍 객체)은 게임 쪽 몫.
+  'function inStorm(){ return STORM; }',
+  grabFn('darknessNow'),
   minC, skyFn, nowC, upFn
 ].join('\n'), box);
 
@@ -118,6 +127,22 @@ chk('셋이 겹치면 곱이다 (0.15×0.65×0.50)', near(all.f, 0.15*0.65*0.50)
 const half = S(0.5, 0.5, 0.5);
 chk('반쯤 오는 비도 하늘은 통째로 닫는다',
     near(half.f, (1-0.425)*(1-0.35)*(1-0.25)), (half.f*100).toFixed(1) + '%');
+
+// ===== 3-2. 폭풍의 어둠 =====
+// 폭풍 속은 해를 묻지 않는다 — 정오에 들어가도 한밤이다. 낮과 밤의 시야가
+// 같아야 하고, 그 값은 밤비(밤 1 + 비)와 같은 최저치여야 한다.
+console.log('\n=== 3-2. 폭풍 ===');
+box.STORM = true;
+const stNoon = S(0, 0, 1);       // 정오의 폭풍 — 해는 중천인데
+const stMid  = S(1, 0, 1);       // 자정의 폭풍
+box.STORM = false;
+const rainMid = S(1, 0, 1);      // 폭풍 아닌 한밤의 비
+chk('폭풍 속은 정오도 한밤이다', near(stNoon.f, 0.15*0.65*0.50),
+    (stNoon.f*100).toFixed(2) + '%');
+chk('낮과 밤의 구별이 없다', near(stNoon.f, stMid.f) && stNoon.km === stMid.km,
+    stNoon.km.toFixed(2) + ' km = ' + stMid.km.toFixed(2) + ' km');
+chk('시야로는 밤비와 같은 바닥이다', near(stNoon.f, rainMid.f),
+    '어둡기 차이(그늘 0.58)는 그리기 쪽 몫');
 
 // ===== 4. 바닥 =====
 console.log('\n=== 4. 바닥 ===');

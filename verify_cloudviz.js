@@ -245,6 +245,16 @@ chk('눈이면 격자 셈이 0 이다', vm.runInContext('cloudNCell', sandbox) =
 vm.runInContext('P.precipTest = 1; cloudVeil();', sandbox);
 chk('비면 덩어리 셈이 살아 있다', vm.runInContext('cloudNCell', sandbox) > 0,
     vm.runInContext('cloudNCell', sandbox) + '칸');
+// 폭풍이면 구름을 아예 걷는다 — 하늘 전체가 하나의 폭풍이라, 어둠(완전한
+// 밤 + 폭우의 그늘)이 하늘 노릇을 하고 덩어리는 그리지 않는다.
+vm.runInContext(`(function(){
+  const d = cloudImg.data;
+  for(let p = 3; p < d.length; p += 4) d[p] = 99;
+  P.precipTest = 3; cloudVeil();
+})()`, sandbox);
+chk('폭풍이면 구름을 걷는다',
+    vm.runInContext('cloudImg.data[3]', sandbox) === 99 &&
+    vm.runInContext('cloudNCell', sandbox) === 0, '표시값 99 유지, 셈 0');
 vm.runInContext('P.precipTest = 0;', sandbox);
 chk('장막 분기가 배선되어 있다',
     /PRECIP_SNOW && precipHere\.rate > 0/.test(html) && /SNOW_SKY/.test(html));

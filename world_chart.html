@@ -95,6 +95,18 @@
     user-select:none;}
   #tune .mi:hover{background:#243733;color:#cdbf9a;}
   #tune .mi.on{color:#ffe9b8;background:#2c3b38;border-color:#8a6d3f;}
+/* 디버그 안 하위 메뉴(배/세계)와 접이식 절 */
+#tune .sub{display:flex;gap:5px;margin:10px 0 4px;}
+#tune .si{flex:1;text-align:center;padding:4px 0;border-radius:4px;cursor:pointer;
+  color:#9fb3ac;font-size:12px;border:1px solid #33443f;background:#16211f;}
+#tune .si:hover{background:#243733;color:#cdbf9a;}
+#tune .si.on{color:#ffe9b8;background:#2c3b38;border-color:#8a6d3f;}
+#tune .subpane{display:none;}
+#tune .subpane.on{display:block;}
+#tune h4.sh{cursor:pointer;user-select:none;}
+#tune h4.sh::before{content:'▾ ';color:#5f7a73;}
+#tune .sec.off h4.sh::before{content:'▸ ';}
+#tune .sec.off .sb{display:none;}
   #tune .pane{display:none;}
   #tune .pane.on{display:block;}
   #tune .empty{color:#7f8f8b;font-size:11.5px;line-height:1.6;padding:14px 0;}
@@ -756,6 +768,17 @@ const P = {
   visNight  : 0.85,   // 완전한 밤이면 시야가 15% 로 준다
   visCloud  : 0.35,   // 하늘이 완전히 덮이면 65% 로
   visRain   : 0.50,   // 세찬 비면 50% 로 — 셋이 겹치면 곱해서 5% 까지 간다
+  // 소리 — 값은 sound_preview.html 에서 귀로 고른 기본값 그대로다
+  sndOn     : 1,      // 0 = 무음
+  sndVol    : 0.7,    // 주 음량
+  sndRainBright: 1.0, // 굵은 비의 솨아― 하는 고음이 얼마나 사는가
+  sndWind   : 0.7,    // 폭풍 바람의 크기
+  sndHowl   : 420,    // 바람 울음의 높이 (Hz)
+  sndWander : 0.6,    // 울음이 오르내리는 폭
+  sndQ      : 4,      // 울음의 공명 — 좁을수록 휘파람에 가깝다
+  sndThLow  : 170,    // 천둥 우르릉의 무게 (Hz)
+  sndThDur  : 3.2,    // 천둥 길이 (초)
+  sndThWob  : 0.55,   // 우르릉이 구르는 느낌
   starMode  : 1,      // 별: 0 끄기 · 1 켜기
   starCount : 500,    // 그릴 별의 수 (밝은 것부터) — 최대 904
   starGain  : 1.0,    // 별의 밝기
@@ -1394,6 +1417,10 @@ function cloudVeil(){
   if(!CLOUD) return;
   const mode = Math.round(P.cloudMode);
   if(mode === 0 || P.cloudGain <= 0) return;
+  // 폭풍 속은 하늘 전체가 하나의 폭풍이다. 시커먼 덩어리를 따로 그리면
+  // 오히려 어색하다 — 걷어 내고, 어둠(완전한 밤 + 폭우의 그늘)이 하늘
+  // 노릇을 한다.
+  if(inStorm()){ cloudNCell = 0; cloudOctUsed = 0; return; }
   // 눈이 내리는 하늘은 시커먼 덩어리가 아니다. 눈구름은 하늘 전체에 고르게
   // 퍼진 희부연 장막이라, 덩어리 대신 밝은 막 한 장으로 바꿔 그린다. 배가 선
   // 자리 기준이다(밤 sunAlt 와 같은 관례). 판정(cloudOpacityAt)은 그대로라
@@ -1674,6 +1701,215 @@ function precipVeil(){
 // 만들고 보여주는 데까지다 — 규칙이 들어올 때 읽을 자리는 sightNow 하나다.
 const SIGHT_MIN = 0.5;    // 아무리 캄캄해도 뱃전은 보인다 (km)
 
+// 지금 폭풍 속인가. 현재는 기상 시험 3 만이 폭풍이다 — 폭풍 본체(이동 객체)가
+// 들어오면 여기에 '반경 안' 판정이 붙는다. 폭우 표현·구름 걷기·어둠 고정·
+// 번개가 전부 이 한 함수를 보므로, 폭풍은 이것 하나만 켜면 통째로 입혀진다.
+function inStorm(){
+  return Math.round(P.precipTest) === 3;
+}
+
+// 지금의 어둠. 평소에는 해의 높이가 정하지만, 폭풍 속에서는 해를 묻지 않고
+// 완전한 밤으로 친다 — 폭풍에 낮과 밤의 구별은 없다. 정오에 들어가도
+// 한밤이고, 여기에 폭우의 그늘(0.58)이 겹치므로 비 오는 밤보다도 어둡다.
+// 밤막·시야·별이 모두 이 값을 읽어 한꺼번에 따라온다.
+function darknessNow(){
+  return inStorm() ? 1 : darkness(sunAlt(ship.x, ship.y));
+}
+
+// ===== 번개 =====
+// 폭풍 속에서만 친다. 두 겹이다: 화면 전체가 하얗게 번쩍하는 섬광과, 그 첫
+// 순간에만 보이는 지그재그 줄기. 시각은 미리 뽑아 둔다 — 매 프레임 주사위를
+// 던지는 게 아니라 '다음 번개 시각' 을 하나 정해 두고 그때가 오면 친다.
+// 시계는 비 낙하와 같은 실제 시각(precipT)이라 게임 배속과 무관하다.
+const LTN_GAP_MIN = 5, LTN_GAP_MAX = 12;   // 다음 번개까지의 간격 (초)
+const LTN_DUR    = 0.30;    // 섬광이 완전히 사그라드는 시간 (초)
+const LTN_FLASH  = 0.55;    // 섬광이 가장 밝을 때 화면을 덮는 정도
+const LTN_BOLT_T = 0.10;    // 줄기가 보이는 시간 (초)
+const LTN_RGB    = '234,240,252';
+
+// 섬광의 밝기 곡선 (0~1). 실제 번개처럼 한 번에 두 번 친다 — 본뇌격이
+// 빠르게 사그라들다가 0.12초쯤 되돌이 뇌격이 한 번 더 솟는다.
+// 순수 함수라 검증이 수치로 잴 수 있다.
+function lightningCurve(dt){
+  if(dt < 0 || dt > LTN_DUR) return 0;
+  const p1 = Math.exp(-dt/0.045);
+  const p2 = 0.7*Math.exp(-Math.pow((dt-0.12)/0.05, 2));
+  return Math.min(1, p1 + p2);
+}
+
+// 줄기. 씨앗 하나로 모양이 정해지는 지그재그 — 같은 씨앗이면 같은 번개라서
+// 한 낙뢰가 그려지는 동안 흔들리지 않고, 검증도 재현할 수 있다.
+function boltPath(seed, w, h){
+  let s = seed >>> 0;
+  const rnd = () => (s = (s*1664525 + 1013904223) >>> 0) / 4294967296;
+  const pts = [];
+  let x = w*(0.15 + 0.7*rnd());              // 어디에 꽂히는가
+  const yEnd = h*(0.55 + 0.25*rnd());        // 수평선 아래 어디까지
+  const n = 7 + (rnd()*4|0);
+  for(let i = 0; i <= n; i++){
+    pts.push([x, -8 + (yEnd+8)*i/n]);
+    x += (rnd()-0.5) * w*0.07;               // 마디마다 옆으로 꺾인다
+  }
+  return pts;
+}
+
+let ltnNext = -1, ltnT0 = -1e9, ltnSeed = 1;
+function lightningVeil(){
+  if(!inStorm()){ ltnNext = -1; return; }    // 폭풍을 나가면 예약도 지운다
+  if(ltnNext < 0) ltnNext = precipT + LTN_GAP_MIN + Math.random()*(LTN_GAP_MAX-LTN_GAP_MIN);
+  if(precipT >= ltnNext){
+    ltnT0 = precipT;
+    ltnSeed = (Math.random()*4294967296) >>> 0;
+    ltnNext = precipT + LTN_GAP_MIN + Math.random()*(LTN_GAP_MAX-LTN_GAP_MIN);
+    SND.thunder(ltnSeed);   // 천둥은 번개의 그 순간, 그 씨앗 — 빛과 소리가 한 몸이다
+  }
+  const f = lightningCurve(precipT - ltnT0);
+  if(f <= 0) return;
+  screenTransform();
+  // 섬광 — 밤막 위에 얹는다. 그래야 어둠을 뚫고 화면이 밝아진다 (그리는 순서 참조)
+  ctx.fillStyle = 'rgba('+LTN_RGB+','+(f*LTN_FLASH).toFixed(3)+')';
+  ctx.fillRect(0, 0, W, H);
+  // 줄기 — 첫 순간에만. 넓은 반투명 획 위에 가는 밝은 심을 겹쳐 발광처럼
+  // 보인다 (항적 머리 밝히기와 같은 수법).
+  if(precipT - ltnT0 < LTN_BOLT_T){
+    const pts = boltPath(ltnSeed, W, H);
+    for(const [lw, aa] of [[5, 0.25*f], [1.6, 0.9*f]]){
+      ctx.strokeStyle = 'rgba('+LTN_RGB+','+aa.toFixed(3)+')';
+      ctx.lineWidth = lw;
+      ctx.beginPath();
+      ctx.moveTo(pts[0][0], pts[0][1]);
+      for(let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+      ctx.stroke();
+    }
+  }
+}
+
+// ===== 소리 =====
+// 음원 파일이 없다. 브라우저에 내장된 신시사이저(Web Audio)로 세 소리 —
+// 비·바람·천둥 — 를 코드로 합성한다. 이 프로젝트가 이미지 없이 코드와
+// 데이터로만 굴러온 것과 같은 이유다. 기본값은 sound_preview.html 에서
+// 귀로 고른 것이고, 같은 합성 코드라 미리듣기에서 들은 그대로 난다.
+//
+// 결합은 화면과 같다: 빗소리는 배 위치의 강수 세기를 그대로 듣고(눈은
+// 무음 — 실제로 눈은 소리가 없다), 바람 울음은 inStorm() 에, 천둥은
+// 번개의 그 순간·그 씨앗에 물린다. 보이는 것과 들리는 것이 일치한다.
+
+// 세기 -> 빗소리 음량. 귀는 로그라 제곱 남짓으로 눌러야 자연스럽다.
+function sndRainLevel(rate){
+  return Math.pow(Math.max(0, Math.min(1, rate)), 1.6)*0.5;
+}
+
+// 천둥 파형. 씨앗 하나로 전체가 정해진다 — 번개 줄기(boltPath)와 같은
+// 씨앗을 받으므로 낙뢰마다 모양과 소리가 함께 달라지고, 같은 낙뢰는 항상
+// 같은 소리다. 짜임새: 처음 60ms 의 쩌적(밝은 잡음) + 그 뒤로 길게
+// 사그라드는 우르릉(저음 잡음 × 느리게 출렁이는 봉투).
+function thunderWave(seed, lowHz, dur, wobble, sr){
+  let s = seed >>> 0 || 1;
+  const rnd = () => (s = (s*1664525 + 1013904223) >>> 0) / 4294967296;
+  const n = Math.floor(sr*(dur + 0.3));
+  const d = new Float32Array(n);
+  const a = Math.min(0.5, lowHz / sr * 6.28);   // 저음만 남기는 한극 필터
+  let y = 0;
+  // 우르릉의 출렁임 — 150ms 마다 새 목표를 뽑아 그 사이를 잇는다.
+  // 파형은 dur 보다 0.3초 길므로 그만큼 넉넉히 뽑아야 꼬리에서 모자라지 않는다.
+  const segN = Math.ceil((dur + 0.3)/0.15) + 2, seg = [];
+  for(let i = 0; i < segN; i++) seg.push(1 - wobble*rnd());
+  let peak = 0;
+  for(let i = 0; i < n; i++){
+    const t = i/sr;
+    const x = rnd()*2 - 1;
+    y += a*(x - y);                                         // 저음 우르릉
+    const k = t/0.15, k0 = Math.floor(k);
+    const und = seg[k0] + (seg[k0+1] - seg[k0])*(k - k0);   // 출렁임
+    const rumble = y * Math.exp(-t/(dur*0.42)) * und;
+    const crack  = (t < 0.06) ? x * (1 - t/0.06) * 0.55 : 0;  // 첫 쩌적
+    d[i] = rumble*3.2 + crack;
+    const ab = Math.abs(d[i]); if(ab > peak) peak = ab;
+  }
+  for(let i = 0; i < n; i++) d[i] /= peak;                  // 넘치지 않게
+  return d;
+}
+
+const SND = (function(){
+  let ac = null, master = null;
+  let rainLP = null, rainGain = null;
+  let windBP = null, windGain = null, lfoGain = null, gustGain = null;
+
+  // 2초짜리 백색 잡음 한 덩어리. 이어 붙여 돌리면 끊김 없이 계속 나온다.
+  function noiseBuffer(){
+    const n = ac.sampleRate*2;
+    const buf = ac.createBuffer(1, n, ac.sampleRate);
+    const d = buf.getChannelData(0);
+    for(let i = 0; i < n; i++) d[i] = Math.random()*2 - 1;
+    return buf;
+  }
+
+  // 브라우저는 사용자가 한 번 조작하기 전에는 소리를 막는다(자동재생 차단).
+  // 그래서 첫 클릭/키에서 깨어난다. 그 전에는 잠들어 있을 뿐 게임에는
+  // 아무 영향도 없다.
+  function wake(){
+    if(ac) return;
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if(!AC) return;
+    ac = new AC();
+    master = ac.createGain(); master.gain.value = 0;
+    master.connect(ac.destination);
+    // 비: 잡음 -> 저음 자르기(웅웅 제거) -> 고음 깎기 -> 음량
+    const rs = ac.createBufferSource(); rs.buffer = noiseBuffer(); rs.loop = true;
+    const hp = ac.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 320;
+    rainLP = ac.createBiquadFilter(); rainLP.type = 'lowpass';
+    rainGain = ac.createGain(); rainGain.gain.value = 0;
+    rs.connect(hp); hp.connect(rainLP); rainLP.connect(rainGain);
+    rainGain.connect(master); rs.start();
+    // 바람: 잡음 -> 좁은 띠만 통과(공명) -> 음량. 띠의 높이가 천천히
+    // 오르내리면 우우웅― 하는 울부짖음이 된다.
+    const ws = ac.createBufferSource(); ws.buffer = noiseBuffer(); ws.loop = true;
+    windBP = ac.createBiquadFilter(); windBP.type = 'bandpass';
+    windGain = ac.createGain(); windGain.gain.value = 0;
+    ws.connect(windBP); windBP.connect(windGain); windGain.connect(master); ws.start();
+    const lfo = ac.createOscillator(); lfo.frequency.value = 0.13;   // 울음의 오르내림
+    lfoGain = ac.createGain(); lfo.connect(lfoGain);
+    lfoGain.connect(windBP.frequency); lfo.start();
+    const gust = ac.createOscillator(); gust.frequency.value = 0.05; // 돌풍의 밀물썰물
+    gustGain = ac.createGain(); gust.connect(gustGain);
+    gustGain.connect(windGain.gain); gust.start();
+  }
+
+  // 매 프레임. 화면이 읽는 값을 그대로 듣는다 — 별도 판정을 만들지 않는다.
+  function step(){
+    if(!ac) return;
+    const on = Math.round(P.sndOn) !== 0;
+    const t = ac.currentTime + 0.08;
+    master.gain.linearRampToValueAtTime(on ? P.sndVol : 0, t);
+    if(!on) return;
+    precipAt(ship.x, ship.y, precipHere);
+    const rate = (precipHere.type === PRECIP_RAIN) ? precipHere.rate : 0;  // 눈은 무음
+    rainGain.gain.linearRampToValueAtTime(sndRainLevel(rate), t);
+    rainLP.frequency.linearRampToValueAtTime((900 + 2600*rate)*P.sndRainBright, t);
+    const w = inStorm() ? P.sndWind : 0;
+    windGain.gain.cancelScheduledValues(0);
+    windGain.gain.linearRampToValueAtTime(w*0.30, t);
+    windBP.frequency.linearRampToValueAtTime(P.sndHowl, t);
+    windBP.Q.linearRampToValueAtTime(P.sndQ, t);
+    lfoGain.gain.linearRampToValueAtTime(P.sndHowl*0.55*P.sndWander, t);
+    gustGain.gain.linearRampToValueAtTime(w*0.10, t);
+  }
+
+  // 번개가 치는 그 순간, 그 씨앗으로. lightningVeil 이 부른다.
+  function thunder(seed){
+    if(!ac || Math.round(P.sndOn) === 0) return;
+    const wav = thunderWave(seed, P.sndThLow, P.sndThDur, P.sndThWob, ac.sampleRate);
+    const buf = ac.createBuffer(1, wav.length, ac.sampleRate);
+    buf.getChannelData(0).set(wav);
+    const src = ac.createBufferSource(); src.buffer = buf;
+    const g = ac.createGain(); g.gain.value = 0.9;
+    src.connect(g); g.connect(master); src.start();
+  }
+  return { wake, step, thunder };
+})();
+window.addEventListener('pointerdown', () => SND.wake(), { once:true });
+window.addEventListener('keydown',     () => SND.wake(), { once:true });
+
 // 머리 위 하늘이 얼마나 열려 있는가 (0 = 완전히 덮임, 1 = 맑음).
 // 별 관측과 시야가 같은 하늘을 봐야 하므로 한 군데로 모았다 — 구름에 별이
 // 가렸는데 시야는 멀쩡하면 이상하다.
@@ -1690,7 +1926,7 @@ function skyClearAt(wx, wy){
 
 const sightNow = { factor:1, km:20, dark:0, cloud:0, rain:0 };
 function updateSight(){
-  const dark  = darkness(sunAlt(ship.x, ship.y));
+  const dark  = darknessNow();
   const cloud = 1 - skyClearAt(ship.x, ship.y);
   precipAt(ship.x, ship.y, precipHere);
   const rain  = precipHere.rate;
@@ -1719,7 +1955,7 @@ function sunRA(){
 }
 function starVeil(){
   if(!STARS || Math.round(P.starMode) === 0 || P.starGain <= 0) return;
-  const night = darkness(sunAlt(ship.x, ship.y));        // 0 낮 ~ 1 완전한 밤
+  const night = darknessNow();                           // 0 낮 ~ 1 완전한 밤
   if(night <= 0.02) return;
   // 머리 위 구름. 별은 배에서 올려다보는 것이라 배가 선 자리 한 점만 본다.
   // 하늘이 열린 정도는 시야 계산과 같은 자리(skyClearAt)에서 읽는다.
@@ -1772,7 +2008,7 @@ const LAMP_CORE = 0.21;                 // 완전히 밝은 안쪽 원 = 바깥 
 function nightVeil(){
   const mode = Math.round(P.nightMode);
   if(mode === 0) return;
-  const a = darkness(sunAlt(ship.x, ship.y)) * P.nightGain;
+  const a = darknessNow() * P.nightGain;
   if(a <= 0.002) return;
   screenTransform();
   if(mode === 2){
@@ -1843,11 +2079,16 @@ const TUNE = (function(){
     ['c:water',    '물',           0, 999,  1,   '통',   0],
     ['c:food',     '식량',         0, 999,  1,   '통',   0],
     ['c:timber',   '자재',         0, 999,  1,   '개',   0],
-    ['c:shot',     '포탄',         0, 999,  1,   '발',   0]
+    ['c:shot',     '포탄',         0, 999,  1,   '발',   0],
+    // 배에 딸린 표시·시험 손잡이. 세계가 아니라 배의 것이다 — 배 크기는 이
+    // 배를 얼마나 크게 그리는가, 등불은 이 배의 등불, 강제 속력은 이 배를
+    // 미는 시험 손잡이다.
+    ['@표시·시험'],
+    ['shipScale', '배 크기',     0.3,   5, 0.05,'',     2],
+    ['nightLamp', '등불 거리',   0, 10000,  25, 'km',  0],
+    ['shipForce', '강제 속력',   0,   30,  0.1, 'kn',   1]
   ];
   const WORLD_SPEC = [
-    ['@조작'],
-    ['shipForce', '강제 속력',   0,   30,  0.1, 'kn',   1],
     ['@바람'],
     ['windGain',  '풍속 보정',   0.5,  4,  0.1, '배',   1],
     ['windMin',   '무풍 기준',   0,    6,  0.1, 'm/s',  1],
@@ -1856,7 +2097,6 @@ const TUNE = (function(){
     ['hoursPerSec','시계',        0.5,  48, 0.5, '시간', 1],
     ['nightMode', '밤 표현',     0,    3,  1,   '',     0],
     ['nightGain', '밤 세기',     0,  1.5,  0.05,'배',   2],
-    ['nightLamp', '등불 거리',   0, 10000,  25, 'km',  0],
     ['cloudMode', '구름 표현',   0,    2,  1,   '',     0],
     ['cloudGain', '구름 세기',   0,    1,  0.05,'배',   2],
     ['cloudSize', '구름 크기',    0,  500,  5,   'km',  0],
@@ -1874,9 +2114,19 @@ const TUNE = (function(){
     ['starGain',  '별 밝기',     0,    2,  0.05,'배',   2],
     ['skySpan',   '하늘 크기',   0.8, 2.2,  0.05,'배',   2],
     ['curGain',   '해류 세기',   0,    5,  0.1, '배',   1],
+    ['@소리'],
+    ['sndOn',     '소리',       0,    1,  1,   '',     0],
+    ['sndVol',    '소리 크기',   0,    1,  0.05,'',     2],
+    ['sndRainBright','비 밝기', 0.5,   2,  0.05,'배',   2],
+    ['sndWind',   '바람 세기',   0,    1,  0.05,'',     2],
+    ['sndHowl',   '바람 높이', 150,  900,  10,  'Hz',   0],
+    ['sndWander', '바람 요동',   0,    1,  0.05,'',     2],
+    ['sndQ',      '바람 공명',   1,   10,  0.5, '',     1],
+    ['sndThLow',  '천둥 낮음',  60,  400,  5,   'Hz',   0],
+    ['sndThDur',  '천둥 길이',   1,    6,  0.1, '초',   1],
+    ['sndThWob',  '천둥 요동',   0,    1,  0.05,'',     2],
     ['@화면'],
-    ['*zoom',     '지도 배율',   0.3, 100, 0.1, '×',    2],
-    ['shipScale', '배 크기',     0.3,   5, 0.05,'',     2]
+    ['*zoom',     '지도 배율',   0.3, 100, 0.1, '×',    2]
   ];
   const SPEC = SHIP_SPEC.concat(WORLD_SPEC);
   const GRP = { s:'spec', t:'state', c:'cargo' };
@@ -1906,6 +2156,11 @@ const TUNE = (function(){
   const LS_HINT = 'aod_hint';           // 화면 아래 안내줄을 켜 두는가
   const LS_DATE = 'aod_datefmt';        // 날짜 표기 방식
   let tab = 'dbg';
+  // 디버그 안 하위 메뉴의 상태. 어느 판(배/세계)을 보고 있었는지와 접어 둔
+  // 절을 세션 동안 기억한다 — 패널을 닫았다 열어도, 배를 바꿔 다시 지어도
+  // 보던 자리가 유지된다.
+  let sub = 'ship';
+  const secOff = {};                    // 접어 둔 절만 적는다 (기본은 전부 열림)
   let dateFmt = 'head';                 // 기본
   try{ const s = localStorage.getItem(LS_DATE);
        if(DATEFMT.some(x=>x[0]===s)) dateFmt = s; }catch(e){}
@@ -1944,20 +2199,39 @@ const TUNE = (function(){
            '</option>').join('')+
          '</select></div></div>'+
          '<div class="pane" id="pane_dbg">';
-    // 대상 고르개 — 여기서 배를 고르면 아래 값들이 그 배의 것으로 바뀐다
-    h += '<div class="tgt"><span>대상</span><select id="tTarget">';
-    for(const key in SHIPS)
-      h += '<option value="'+key+'"'+(key===SHIP.key?' selected':'')+'>'+SHIPS[key].label+'</option>';
-    h += '</select></div>'+
-         '<div class="tgt2">'+SHIP.name+' · '+SHIP.rig+'</div>';
-    for(const sp of SPEC){
-      if(sp[0][0]==='@'){ h += '<h4>'+sp[0].slice(1)+'</h4>'; continue; }
-      const [k,lab,mn,mx,st] = sp, id = idOf(k);
-      h += '<div class="row" title="기본값 '+pdef(k)+'"><span class="nm">'+lab+'</span>'+
-           '<input type="range" id="i_'+id+'" min="'+mn+'" max="'+mx+'" step="'+st+'">'+
-           '<input type="text" class="val" id="v_'+id+'" inputmode="decimal" '+
-           'spellcheck="false" autocomplete="off"></div>';
+    // 디버그 안 하위 메뉴 — 배 / 세계. 위의 일반·설정·디버그가 '무엇을 하러
+    // 왔는가'라면, 이 단은 '무엇을 만지는가'다. 각 판 안은 접이식 절이라
+    // (dat.GUI 같은 디버그 도구의 관례) 쓰는 절만 펴 두면 목록이 짧아진다.
+    function specHTML(list, pane){
+      let s = '', open = false;
+      for(const sp of list){
+        if(sp[0][0]==='@'){
+          const nm = sp[0].slice(1), key = pane+'|'+nm;
+          if(open) s += '</div></div>';
+          s += '<div class="sec'+(secOff[key]?' off':'')+'" data-sec="'+key+'">'+
+               '<h4 class="sh">'+nm+'</h4><div class="sb">';
+          open = true; continue;
+        }
+        const [k,lab,mn,mx,st] = sp, id = idOf(k);
+        s += '<div class="row" title="기본값 '+pdef(k)+'"><span class="nm">'+lab+'</span>'+
+             '<input type="range" id="i_'+id+'" min="'+mn+'" max="'+mx+'" step="'+st+'">'+
+             '<input type="text" class="val" id="v_'+id+'" inputmode="decimal" '+
+             'spellcheck="false" autocomplete="off"></div>';
+      }
+      if(open) s += '</div></div>';
+      return s;
     }
+    // 대상 고르개 — 배에 관한 것이므로 배 판 안에 둔다
+    let tg = '<div class="tgt"><span>대상</span><select id="tTarget">';
+    for(const key in SHIPS)
+      tg += '<option value="'+key+'"'+(key===SHIP.key?' selected':'')+'>'+SHIPS[key].label+'</option>';
+    tg += '</select></div>'+
+          '<div class="tgt2">'+SHIP.name+' · '+SHIP.rig+'</div>';
+    h += '<div class="sub">'+
+         '<span class="si" id="si_ship">배</span>'+
+         '<span class="si" id="si_world">세계</span></div>'+
+         '<div class="subpane" id="sp_ship">'+tg+specHTML(SHIP_SPEC,'ship')+'</div>'+
+         '<div class="subpane" id="sp_world">'+specHTML(WORLD_SPEC,'world')+'</div>';
     h += '<div class="out" id="tuneOut"></div>'+
          '<div class="btns"><button id="tCopy">값 복사</button>'+
          '<button id="tReset">되돌리기</button></div>'+
@@ -1999,6 +2273,25 @@ const TUNE = (function(){
     document.getElementById('tTarget').addEventListener('change', e=>{
       SHIP = SHIPS[e.target.value] || SHIP;
       syncDerived(); build(); refresh(); showTab('dbg');
+    });
+    // 하위 메뉴 전환 — 누른 판만 보인다
+    function showSub(p){
+      sub = p;
+      document.getElementById('si_ship').classList.toggle('on', p==='ship');
+      document.getElementById('si_world').classList.toggle('on', p==='world');
+      document.getElementById('sp_ship').classList.toggle('on', p==='ship');
+      document.getElementById('sp_world').classList.toggle('on', p==='world');
+    }
+    document.getElementById('si_ship').addEventListener('click', ()=>showSub('ship'));
+    document.getElementById('si_world').addEventListener('click', ()=>showSub('world'));
+    showSub(sub);
+    // 절 접기 — 제목을 누르면 접었다 편다
+    el.querySelectorAll('.sec > h4.sh').forEach(hd=>{
+      hd.addEventListener('click', ()=>{
+        const sec = hd.parentElement;
+        sec.classList.toggle('off');
+        secOff[sec.dataset.sec] = sec.classList.contains('off');
+      });
     });
     document.getElementById('tCopy').addEventListener('click', copy);
     document.getElementById('tReset').addEventListener('click', reset);
@@ -2206,6 +2499,7 @@ function loop(now){
     CURVIZ.step(dt);
   }
   updateSight();   // 멈춰 있어도 시야는 잰다 — 패널이 열려 있으면 값이 보이므로
+  SND.step();      // 소리도 같다 — 멈춰 있어도 비는 계속 내리고 있으니까
   // 배경(해도 밖 = 미지의 바다)
   ctx.setTransform(DPR,0,0,DPR,0,0);
   ctx.fillStyle=VOID; ctx.fillRect(0,0,W,H);
@@ -2223,6 +2517,7 @@ function loop(now){
   precipVeil();         //   — 흐린 밤이 가장 캄캄하다. 비는 구름 다음 —
                         //     구름 속에서 내리는 것이므로 구름보다 앞에 온다
   nightVeil();          // 밤은 지도·구름·비를 한꺼번에 덮는다
+  lightningVeil();      // 번개는 밤 다음 — 어둠을 뚫고 화면이 밝아져야 한다
   starVeil();           // 별은 밤 다음이다. 밤에 함께 어두워지면 안 되니까
   compass();
   frameVignette();

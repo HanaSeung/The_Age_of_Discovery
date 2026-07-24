@@ -50,10 +50,31 @@ const dbgStart = build.indexOf('pane_dbg');
 const dbgEnd   = build.indexOf('el.innerHTML');
 chk('pane_dbg 를 연다', dbgStart > 0);
 const dbgHtml = build.slice(dbgStart, dbgEnd);
-for(const [n,s] of [['슬라이더 루프', 'for(const sp of SPEC)'], ['출력 상자', 'tuneOut'],
+for(const [n,s] of [['슬라이더 루프', 'for(const sp of list)'], ['출력 상자', 'tuneOut'],
                     ['값 복사 단추', 'tCopy'], ['되돌리기 단추', 'tReset'],
                     ['안내문', 'class="note"']])
   chk(n + ' 이 디버그 칸 안에 있다', dbgHtml.includes(s));
+
+console.log('\n=== 3-2. 디버그 안 하위 메뉴 — 배 / 세계 ===');
+chk('하위 메뉴 단추가 둘이다 (배·세계)',
+    dbgHtml.includes('id="si_ship">배<') && dbgHtml.includes('id="si_world">세계<'));
+chk('판이 둘로 나뉜다',
+    dbgHtml.includes('id="sp_ship"') && dbgHtml.includes('id="sp_world"'));
+chk('배 판은 SHIP_SPEC, 세계 판은 WORLD_SPEC 을 채운다',
+    build.includes('specHTML(SHIP_SPEC') && build.includes('specHTML(WORLD_SPEC'));
+chk('대상 고르개는 배 판 안이다',
+    build.includes(`id="sp_ship">'+tg+specHTML(SHIP_SPEC`));
+chk('절이 접힌다 (제목 클릭)', /sec\.classList\.toggle\('off'\)/.test(src));
+chk('접은 절을 기억한다', /secOff\[sec\.dataset\.sec\]/.test(src) &&
+    /const secOff = \{\}/.test(src));
+chk('보던 판을 기억한다', /let sub = 'ship'/.test(src) && /showSub\(sub\)/.test(src));
+// 배의 것은 배에 있다 — 배 크기·등불 거리·강제 속력은 세계가 아니라 배다
+const shipBlk  = (src.match(/const SHIP_SPEC = \[[\s\S]*?\];/) || [''])[0];
+const worldBlk = (src.match(/const WORLD_SPEC = \[[\s\S]*?\];/) || [''])[0];
+for(const k of ['shipScale', 'nightLamp', 'shipForce'])
+  chk(k + ' 이 배 쪽이다', shipBlk.includes("['" + k + "'") &&
+      !worldBlk.includes("['" + k + "'"));
+chk('배 판에 표시·시험 절이 있다', shipBlk.includes("['@표시·시험']"));
 chk('일반 칸을 renderGeneral 이 채운다',
     /<div class="pane" id="pane_gen"><\/div>/.test(build) && /function renderGeneral\(\)/.test(src));
 chk('설정 칸에 체크상자가 있다', /pane_set[\s\S]{0,200}type="checkbox" id="cHint"/.test(build));

@@ -384,7 +384,8 @@ chk('작은 화면에서는 스크롤로 받는다', /#tune \.body\{[^}]*overflo
 console.log('\n=== 5-7. 디버그 탭도 같은 한 줄형인가 ===');
 const build = (src.match(/function build\(\)\{[\s\S]*?\r?\n  \}/) || [''])[0];
 chk('한 줄에 [라벨][슬라이더][값] 이다',
-    /<div class="row" title="기본값[\s\S]{0,120}<span class="nm">'\+lab[\s\S]{0,200}<input type="range"[\s\S]{0,160}<span class="val"/.test(build));
+    // 값 칸은 span 이 아니라 직접 입력되는 <input class="val"> 다 (타이핑 기능)
+    /<div class="row" title="기본값[\s\S]{0,120}<span class="nm">'\+lab[\s\S]{0,200}<input type="range"[\s\S]{0,160}<input type="text" class="val"/.test(build));
 chk('.row 가 가로 배치다', /#tune \.row\{display:flex;align-items:center/.test(src));
 chk('슬라이더가 남는 폭을 먹는다', /#tune \.row>input\[type=range\]\{flex:1 1 auto/.test(src));
 chk('값이 오른쪽 정렬이다', /#tune \.row>\.val\{[^}]*text-align:right/.test(src));

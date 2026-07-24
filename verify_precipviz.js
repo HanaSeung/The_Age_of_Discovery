@@ -42,6 +42,9 @@ console.log('  배 ' + iShip + ' < 구름 ' + iCloud + ' < 비 ' + iPrec +
 chk('비를 그린다', iPrec > 0);
 chk('구름 다음에 비가 온다', iCloud < iPrec);
 chk('비 다음에 밤이 온다', iPrec < iNight);
+const iLtn = ord('lightningVeil();');
+chk('번개가 밤 다음이다 — 어둠을 뚫고 밝아야 한다', iLtn > iNight && iLtn < iStar,
+    '밤 ' + iNight + ' < 번개 ' + iLtn + ' < 별 ' + iStar);
 chk('나침반은 맨 뒤에 남는다', iComp > iStar);
 
 // ===== 3. 시계 =====
@@ -101,6 +104,12 @@ vm.runInContext([
   (src.match(/const PRECIP_\w+[^;]*;/g) || []).join('\n'),
   (src.match(/const (RAIN|SNOW)_\w+[^;]*;/g) || []).join('\n'),
   grab(/const GLOOM_RGB[^;]+;/),
+  (src.match(/const LTN_\w+[^;]*;/g) || []).join('\n'),
+  'let ltnNext = -1, ltnT0 = -1e9, ltnSeed = 1;',
+  // 천둥은 소리 쪽 몫이다. 여기서는 부르는지만 본다.
+  'let THUNDERED = -1;',
+  'const SND = { thunder(seed){ THUNDERED = seed; } };',
+  grabFn('inStorm'), grabFn('lightningCurve'), grabFn('boltPath'), grabFn('lightningVeil'),
   'let precipT = 0;',
   grab(/const precipDrops = \(function\(\)\{[\s\S]*?\n\}\)\(\);/),
   grabFn('airTempC'), grabFn('precipAt'), grabFn('precipVeil'),
@@ -305,6 +314,51 @@ chk('1.5배 빨리 떨어진다', Math.abs(fH/fR - 1.5) < 0.03,
 const hG = h0.fills.find(f => f[4] && f[4].indexOf('22,27,36') >= 0);
 chk('그늘이 폭우값으로 짙다', !!hG && /0\.580/.test(hG[4]),
     hG ? hG[4] : '(없음)');
+
+// ===== 7-5. 번개 =====
+// 섬광 곡선은 순수 함수라 수치로 재고, 줄기는 씨앗으로 재현하고,
+// 치는 순간은 상태를 손으로 놓고 한 프레임 그려 확인한다.
+console.log('\n=== 7-5. 번개 ===');
+const C = t => vm.runInContext('lightningCurve(' + t + ')', box);
+chk('시작이 가장 밝다', Math.abs(C(0) - 1) < 0.01, C(0).toFixed(3));
+chk('사그라들다 되돌이 뇌격이 다시 솟는다', C(0.07) < C(0.03) && C(0.12) > C(0.07),
+    C(0.03).toFixed(2) + ' -> ' + C(0.07).toFixed(2) + ' -> ' + C(0.12).toFixed(2));
+chk('끝나면 0 이다', C(0.31) === 0 && C(-0.01) === 0);
+const b1 = JSON.stringify(vm.runInContext('boltPath(7, W, H)', box));
+const b2 = JSON.stringify(vm.runInContext('boltPath(7, W, H)', box));
+const b3 = JSON.stringify(vm.runInContext('boltPath(8, W, H)', box));
+chk('같은 씨앗이면 같은 줄기다', b1 === b2);
+chk('씨앗이 다르면 다른 줄기다', b1 !== b3);
+chk('하늘에서 바다까지 꽂힌다', (function(){
+  const p = JSON.parse(b1);
+  return p[0][1] < 0 && p[p.length-1][1] > box.H*0.5;
+})());
+box.P.precipTest = 3;
+vm.runInContext('precipT = 100; ltnT0 = 100; ltnNext = 200;', box);
+strokes.length = 0; fills.length = 0; arcs.length = 0;
+vm.runInContext('lightningVeil()', box);
+const flash = fills.find(f => f[4] && f[4].indexOf('234,240,252') >= 0);
+chk('섬광이 화면 전체를 덮는다', !!flash &&
+    flash[0] === 0 && flash[1] === 0 && flash[2] === box.W && flash[3] === box.H);
+chk('가장 밝을 때 화면의 55% 를 덮는다', !!flash && /0\.550/.test(flash[4]),
+    flash ? flash[4] : '(없음)');
+chk('줄기를 두 겹으로 긋는다 (넓은 획 + 밝은 심)', strokes.length >= 12,
+    strokes.length + '획');
+box.P.precipTest = 0;
+strokes.length = 0; fills.length = 0;
+vm.runInContext('lightningVeil()', box);
+chk('폭풍 밖에서는 치지 않는다', fills.length === 0 && strokes.length === 0);
+chk('폭풍을 나가면 예약이 지워진다', vm.runInContext('ltnNext', box) === -1);
+// 천둥과 번개의 일치 — 예약 시각이 되어 번개가 치는 그 갱신에서, 줄기를
+// 정한 바로 그 씨앗으로 SND.thunder 가 불려야 한다. 빛과 소리가 한 몸이다.
+box.P.precipTest = 3;
+vm.runInContext('precipT = 300; ltnNext = 299; ltnT0 = -1e9; lightningVeil()', box);
+chk('번개가 치는 순간 천둥이 함께 터진다',
+    vm.runInContext('THUNDERED', box) === vm.runInContext('ltnSeed', box) &&
+    vm.runInContext('THUNDERED', box) >= 0,
+    '씨앗 ' + vm.runInContext('THUNDERED', box) + ' 공유');
+box.P.precipTest = 0;
+vm.runInContext('lightningVeil()', box);
 
 // ===== 8. 화면을 벗어나지 않는가 =====
 // 화면 밖에 그리면 보이지 않을 뿐 값은 낭비된다. 빗줄기 길이만큼의
