@@ -96,6 +96,13 @@
   #tune .mi:hover{background:#243733;color:#cdbf9a;}
   #tune .mi.on{color:#ffe9b8;background:#2c3b38;border-color:#8a6d3f;}
 /* 디버그 안 하위 메뉴(배/세계)와 접이식 절 */
+/* 배/세계 줄과 대상 고르개는 위의 일반·설정·디버그 줄과 마찬가지로 스크롤
+   상자 밖에 있다 — 굴러가는 영역에 아예 속하지 않으므로 목록이 위로 새어
+   나올 틈이 없다. 대신 디버그 탭에만 있는 것이라 탭에 따라 여닫는다. */
+#tune .subhead{flex:0 0 auto;padding:10px 14px 4px;background:#121c1a;}
+#tune .subhead.off{display:none;}
+#tune .subhead .sub{margin-top:0;margin-bottom:0;}
+#tune .subhead .tgt2{margin-bottom:0;}
 #tune .sub{display:flex;gap:5px;margin:10px 0 4px;}
 #tune .si{flex:1;text-align:center;padding:4px 0;border-radius:4px;cursor:pointer;
   color:#9fb3ac;font-size:12px;border:1px solid #33443f;background:#16211f;}
@@ -2554,6 +2561,10 @@ const TUNE = (function(){
       document.getElementById('pane_'+id).classList.toggle('on', id===t);
     }
     try{ localStorage.setItem(LS_TAB, t); }catch(e){}
+    // 배/세계 줄은 디버그 탭의 것이다. 스크롤 밖으로 나가 칸에 딸려 숨지
+    // 않으므로 탭을 옮길 때 여기서 함께 여닫는다.
+    const sh = document.getElementById('subHead');
+    if(sh) sh.classList.toggle('off', t !== 'dbg');
     const b = el.querySelector('.body');    // 스크롤은 카드가 아니라 .body 가 갖는다
     if(b) b.scrollTop = 0;
   }
@@ -2562,7 +2573,21 @@ const TUNE = (function(){
     let h = '<div class="head" id="tHead"></div><div class="menu">';
     for(const [id,lab] of TABS)
       h += '<span class="mi" id="mi_'+id+'" data-t="'+id+'">'+lab+'</span>';
-    h += '</div><div class="body">'+
+    h += '</div>';
+    // 배/세계 줄과 대상 고르개 — 스크롤 상자(.body) 앞에 둔다. 위의 메뉴 줄과
+    // 같은 층이라 목록을 아무리 굴려도 자리를 지킨다.
+    // 대상은 배에 관한 것이라 '배' 를 볼 때만 나온다 (showSub 이 여닫는다).
+    let tg = '<div class="tgt"><span>대상</span><select id="tTarget">';
+    for(const key in SHIPS)
+      tg += '<option value="'+key+'"'+(key===SHIP.key?' selected':'')+'>'+SHIPS[key].label+'</option>';
+    tg += '</select></div>'+
+          '<div class="tgt2">'+SHIP.name+' · '+SHIP.rig+'</div>';
+    h += '<div class="subhead" id="subHead">'+
+         '<div class="sub">'+
+         '<span class="si" id="si_ship">배</span>'+
+         '<span class="si" id="si_world">세계</span></div>'+
+         '<div id="tgtBox">'+tg+'</div></div>';
+    h += '<div class="body">'+
          '<div class="pane" id="pane_gen"></div>'+
          '<div class="pane" id="pane_set"><h4>화면</h4>'+
          '<label class="chk"><input type="checkbox" id="cHint">'+
@@ -2599,16 +2624,8 @@ const TUNE = (function(){
       if(open) s += '</div></div>';
       return s;
     }
-    // 대상 고르개 — 배에 관한 것이므로 배 판 안에 둔다
-    let tg = '<div class="tgt"><span>대상</span><select id="tTarget">';
-    for(const key in SHIPS)
-      tg += '<option value="'+key+'"'+(key===SHIP.key?' selected':'')+'>'+SHIPS[key].label+'</option>';
-    tg += '</select></div>'+
-          '<div class="tgt2">'+SHIP.name+' · '+SHIP.rig+'</div>';
-    h += '<div class="sub">'+
-         '<span class="si" id="si_ship">배</span>'+
-         '<span class="si" id="si_world">세계</span></div>'+
-         '<div class="subpane" id="sp_ship">'+tg+specHTML(SHIP_SPEC,'ship')+'</div>'+
+    // 디버그 칸에는 값 목록만 남는다 — 배/세계 줄과 대상은 스크롤 밖으로 갔다
+    h += '<div class="subpane" id="sp_ship">'+specHTML(SHIP_SPEC,'ship')+'</div>'+
          '<div class="subpane" id="sp_world">'+specHTML(WORLD_SPEC,'world')+'</div>';
     h += '<div class="out" id="tuneOut"></div>'+
          '<div class="btns"><button id="tCopy">값 복사</button>'+
@@ -2679,6 +2696,8 @@ const TUNE = (function(){
       document.getElementById('si_world').classList.toggle('on', p==='world');
       document.getElementById('sp_ship').classList.toggle('on', p==='ship');
       document.getElementById('sp_world').classList.toggle('on', p==='world');
+      // 대상은 배를 볼 때만. 고정 상자 안에 있으므로 여기서 함께 여닫는다.
+      document.getElementById('tgtBox').style.display = p==='ship' ? '' : 'none';
     }
     document.getElementById('si_ship').addEventListener('click', ()=>showSub('ship'));
     document.getElementById('si_world').addEventListener('click', ()=>showSub('world'));

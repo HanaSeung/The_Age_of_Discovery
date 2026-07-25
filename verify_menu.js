@@ -56,14 +56,29 @@ for(const [n,s] of [['슬라이더 루프', 'for(const sp of list)'], ['출력 �
   chk(n + ' 이 디버그 칸 안에 있다', dbgHtml.includes(s));
 
 console.log('\n=== 3-2. 디버그 안 하위 메뉴 — 배 / 세계 ===');
+// 배·세계 단추는 디버그 칸 안이 아니라 그 위 고정 상자에 있다 (아래 3-2 참고)
 chk('하위 메뉴 단추가 둘이다 (배·세계)',
-    dbgHtml.includes('id="si_ship">배<') && dbgHtml.includes('id="si_world">세계<'));
+    build.includes('id="si_ship">배<') && build.includes('id="si_world">세계<'));
 chk('판이 둘로 나뉜다',
     dbgHtml.includes('id="sp_ship"') && dbgHtml.includes('id="sp_world"'));
 chk('배 판은 SHIP_SPEC, 세계 판은 WORLD_SPEC 을 채운다',
     build.includes('specHTML(SHIP_SPEC') && build.includes('specHTML(WORLD_SPEC'));
-chk('대상 고르개는 배 판 안이다',
-    build.includes(`id="sp_ship">'+tg+specHTML(SHIP_SPEC`));
+// 배/세계 줄과 대상은 위의 일반·설정·디버그 줄과 같은 층 — 스크롤 상자 밖이다.
+// 스크롤 안에 두고 붙여만 두면 목록이 위쪽 여백 틈으로 새어 나온다.
+chk('배·세계 줄과 대상이 한 상자에 묶였다',
+    build.includes('<div class="subhead" id="subHead">') &&
+    build.includes(`<div id="tgtBox">'+tg+'</div></div>'`));
+chk('그 상자가 스크롤 상자 앞에 온다',
+    build.indexOf('class="subhead"') < build.indexOf(`<div class="body">`));
+chk('상자가 굴러가지 않는다', /#tune \.subhead\{flex:0 0 auto/.test(src));
+chk('붙여 두기(sticky)에 기대지 않는다', !/#tune \.subhead\{[^}]*position:sticky/.test(src));
+chk('디버그 탭에서만 보인다',
+    /getElementById\('subHead'\)[\s\S]{0,60}classList\.toggle\('off', t !== 'dbg'\)/.test(src) &&
+    /#tune \.subhead\.off\{display:none/.test(src));
+chk('세계를 볼 때는 대상을 감춘다',
+    /getElementById\('tgtBox'\)\.style\.display = p==='ship' \? '' : 'none'/.test(src));
+chk('판에는 스펙만 남았다',
+    build.includes(`id="sp_ship">'+specHTML(SHIP_SPEC`));
 chk('절이 접힌다 (제목 클릭)', /sec\.classList\.toggle\('off'\)/.test(src));
 chk('접은 절을 기억한다', /secOff\[sec\.dataset\.sec\]/.test(src) &&
     /const secOff = \{\}/.test(src));
