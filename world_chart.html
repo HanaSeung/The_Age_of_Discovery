@@ -304,8 +304,11 @@ const BATHY = (function(){
   return meta;
 })();
 
-// ===== 육지 폴리곤 → 단일 Path2D (evenodd) : land_data.js 이진 디코드 =====
+// ===== 육지 폴리곤 → 단일 Path2D (evenodd) + 해안선 선분 : land_data.js 이진 디코드 =====
+// 그리는 것(landPath)과 막는 것(COASTSEG)을 같은 자료에서 함께 뽑는다.
+// 배율을 아무리 올려도 둘이 어긋나지 않는다 — 이것이 요점이다.
 const landPath = new Path2D();
+let COASTSEG = null;                   // Float32Array — 선분마다 x0,y0,x1,y1  (색 상수 COAST 와 구분)
 (function(){
   const L = window.LANDBIN;
   if(!L){ console.error('land_data.js 없음 — build_land.py 를 실행하시오'); return; }
@@ -318,20 +321,31 @@ const landPath = new Path2D();
   const lens = new Uint32Array(nRings);
   for(let r=0;r<nRings;r++){ lens[r]=dv.getUint32(off,true); off+=4; }
   const S = L.scale;
+  COASTSEG = new Float32Array(L.points*4);
+  let s = 0;
   for(let r=0;r<nRings;r++){
     const n = lens[r];
+    let fx=0, fy=0, ax=0, ay=0;                    // 고리의 첫 점 / 직전 점
     for(let i=0;i<n;i++){
       const lon = dv.getInt16(off,true)/S; off+=2;
       const lat = dv.getInt16(off,true)/S; off+=2;
       const p = project(lon,lat);
-      if(i===0) landPath.moveTo(p[0],p[1]); else landPath.lineTo(p[0],p[1]);
+      if(i===0){ landPath.moveTo(p[0],p[1]); fx=p[0]; fy=p[1]; }
+      else     { landPath.lineTo(p[0],p[1]);
+                 COASTSEG[s++]=ax; COASTSEG[s++]=ay; COASTSEG[s++]=p[0]; COASTSEG[s++]=p[1]; }
+      ax=p[0]; ay=p[1];
     }
     landPath.closePath();
+    if(n>1){ COASTSEG[s++]=ax; COASTSEG[s++]=ay; COASTSEG[s++]=fx; COASTSEG[s++]=fy; }  // 고리를 닫는 변
   }
-  console.log('land: rings',nRings,'points',L.points);
+  COASTSEG = COASTSEG.subarray(0, s);
+  console.log('land: rings',nRings,'points',L.points,'| 해안선 선분',s/4);
 })();
 
 // ===== 충돌 마스크 래스터화 (메모리 절약: 가로 밴드 단위로 판독) =====
+// 주의: 배의 이동은 더 이상 이것을 쓰지 않는다 (아래 해안선 색인이 맡는다).
+// 한 셀이 4.9km 라 배율을 올리면 화면과 어긋난다. 거친 판정으로 충분한 곳에만 쓴다
+// — 해류 육지 마스킹 · 폭풍 자리 고르기 · 육지 발견.
 const landMask = new Uint8Array(MASK_W*MASK_H);
 (function(){
   const BAND = 512;                                   // 한 번에 읽을 행 수
@@ -355,6 +369,117 @@ function isLand(wx,wy){
   let my = (wy*(MASK_H/WORLD_H))|0;
   if(my<0) my=0; else if(my>=MASK_H) my=MASK_H-1;
   return landMask[my*MASK_W + (mx>=MASK_W?MASK_W-1:mx)] === 1;
+}
+
+// ===== 해안선 선분 격자 색인 (배의 충돌) =====
+// 배는 반지름 HULL_R 인 원으로 다룬다. "언제나 해안선에서 HULL_R 이상 떨어져 있다"를
+// 지키면 거리 0 을 지날 일이 없으므로 육지를 뚫는 일이 원리상 일어나지 않는다.
+// 시계를 아무리 빨리 돌려도 마찬가지다.
+const HULL_KM  = 0.2;                          // ★ 선체 반지름(km) — 해안에서 이만큼 띄우고 지나간다
+const HULL_R   = HULL_KM / KM_PER_PX;          //   월드px 환산 (0.2km = 0.041px)
+const COL_CELL = 8;                            // 색인 칸 크기(월드px) = 39km
+const COL_SUB  = HULL_R;                       // 해안에 닿았을 때 한 번에 미끄러지는 거리
+const COL_ITER = 32;                           // 한 걸음에 되풀이하는 최대 횟수
+const CGW = (WORLD_W/COL_CELL)|0, CGH = (WORLD_H/COL_CELL)|0;
+let cellStart = null, cellItem = null;         // CSR: 칸별 시작 위치 / 선분 번호
+(function(){
+  if(!COASTSEG){ console.error('해안선 선분 없음 — 충돌 색인을 만들지 못함'); return; }
+  const nSeg = COASTSEG.length/4, nCell = CGW*CGH;
+  cellStart = new Uint32Array(nCell+1);
+  // 선분 하나가 걸치는 칸들을 훑는 틀 (경도는 감는다)
+  const each = (i, cb) => {
+    const x0=COASTSEG[i*4], y0=COASTSEG[i*4+1], x1=COASTSEG[i*4+2], y1=COASTSEG[i*4+3];
+    let gy0=Math.floor((y0<y1?y0:y1)/COL_CELL), gy1=Math.floor((y0>y1?y0:y1)/COL_CELL);
+    // 양끝을 다 잘라야 한다. 위만 자르면 지도 맨 아래변(y=4096)에서 gy0>gy1 이 되어
+    // 그 선분이 색인에서 통째로 빠진다.
+    if(gy0<0) gy0=0; else if(gy0>CGH-1) gy0=CGH-1;
+    if(gy1<0) gy1=0; else if(gy1>CGH-1) gy1=CGH-1;
+    const gx0=Math.floor((x0<x1?x0:x1)/COL_CELL), gx1=Math.floor((x0>x1?x0:x1)/COL_CELL);
+    for(let gy=gy0;gy<=gy1;gy++) for(let gx=gx0;gx<=gx1;gx++)
+      cb(gy*CGW + (((gx%CGW)+CGW)%CGW));
+  };
+  for(let i=0;i<nSeg;i++) each(i, c => cellStart[c+1]++);       // 1차: 센다
+  for(let c=0;c<nCell;c++) cellStart[c+1]+=cellStart[c];        //     누적합
+  cellItem = new Uint32Array(cellStart[nCell]);
+  const fill = cellStart.slice(0,nCell);
+  for(let i=0;i<nSeg;i++) each(i, c => { cellItem[fill[c]++] = i; });   // 2차: 채운다
+  console.log('coast: 선분',nSeg,'| 칸',CGW+'x'+CGH,'| 색인항목',cellItem.length,
+              '| 선체반지름',HULL_KM+'km');
+})();
+
+// 점에서 가장 가까운 해안까지의 거리와 '바깥 법선'(해안에서 그 점을 향하는 방향).
+// 접선이 아니라 법선을 돌려주는 이유: 배가 해안 쪽으로 가는지 바다 쪽으로 가는지를
+// 가려내야 하기 때문이다. 접선만 알면 그 둘을 구분할 수 없다.
+// R 밖은 보지 않는다(못 찾으면 d=Infinity).
+const HIT  = {d:Infinity, nx:0, ny:0};
+const HIT2 = {d:Infinity, nx:0, ny:0};
+function nearestCoast(x, y, R, out){
+  out.d = Infinity; out.nx = 0; out.ny = 0;
+  if(!cellItem) return out;
+  let gy0=Math.floor((y-R)/COL_CELL), gy1=Math.floor((y+R)/COL_CELL);
+  if(gy0<0) gy0=0; else if(gy0>CGH-1) gy0=CGH-1;      // 색인과 같은 방식으로 양끝을 자른다
+  if(gy1<0) gy1=0; else if(gy1>CGH-1) gy1=CGH-1;
+  const gx0=Math.floor((x-R)/COL_CELL), gx1=Math.floor((x+R)/COL_CELL);
+  let best=R*R, bpx=0, bpy=0;
+  for(let gy=gy0;gy<=gy1;gy++){
+    const row = gy*CGW;
+    for(let gx=gx0;gx<=gx1;gx++){
+      const wx = ((gx%CGW)+CGW)%CGW;
+      const ox = (gx-wx)*COL_CELL;              // 경도 이음매 보정 — 월드 폭의 배수가 된다
+      const c = row+wx;
+      for(let k=cellStart[c], e=cellStart[c+1]; k<e; k++){
+        const i = cellItem[k]*4;
+        const ax=COASTSEG[i]+ox, ay=COASTSEG[i+1];
+        const vx=COASTSEG[i+2]+ox-ax, vy=COASTSEG[i+3]-ay;
+        const L2 = vx*vx+vy*vy;
+        let t = L2>0 ? ((x-ax)*vx + (y-ay)*vy)/L2 : 0;
+        if(t<0) t=0; else if(t>1) t=1;
+        const cx = ax+vx*t, cy = ay+vy*t;       // 그 선분 위의 최근접점
+        const dx = x-cx, dy = y-cy;
+        const d2 = dx*dx+dy*dy;
+        if(d2 < best){ best=d2; bpx=cx; bpy=cy; }
+      }
+    }
+  }
+  if(best < R*R){
+    const d = Math.sqrt(best);
+    out.d = d;
+    // 최근접점이 선분 안쪽이면 수직, 끝점이면 방사 방향 — 둘 다 '벗어나는 쪽'이라 옳다
+    if(d > 1e-12){ out.nx = (x-bpx)/d; out.ny = (y-bpy)/d; }
+  }
+  return out;
+}
+
+// 해안을 따라 나아간다.
+//   ① 가장 가까운 해안까지 남은 여유(자유거리)만큼 한 번에 붙는다 — 먼바다는 한 번에 끝난다
+//   ② 닿으면 '안으로 파고드는 성분'만 깎는다. 바다 쪽으로 향하는 성분은 그대로 살린다.
+//      이래야 해안에 붙은 뒤 뱃머리를 바다로 돌리면 곧바로 빠져나온다.
+//   ③ 남는 방향이 없으면(해안을 정면으로 받았고 막다른 곳) 멈춘다 — 좌초
+const MOVE = {x:0, y:0, hit:false, stop:false};
+function moveWithCoast(x, y, dx, dy, out){
+  out.x=x; out.y=y; out.hit=false; out.stop=false;
+  let rem = Math.hypot(dx,dy);
+  if(rem < 1e-9) return out;
+  const ux = dx/rem, uy = dy/rem;                    // 가려는 방향 — 끝까지 유지한다
+  for(let it=0; it<COL_ITER && rem>1e-9; it++){
+    nearestCoast(out.x, out.y, rem + HULL_R + COL_SUB, HIT);
+    const free = (HIT.d===Infinity ? Infinity : HIT.d - HULL_R);
+    if(free >= rem){ out.x += ux*rem; out.y += uy*rem; rem=0; break; }   // ①
+    if(free > COL_SUB){ out.x += ux*free; out.y += uy*free; rem -= free; continue; }
+    out.hit = true;                                                      // ②
+    const dn = ux*HIT.nx + uy*HIT.ny;              // 법선 성분: 양수면 바다 쪽
+    let mx = ux, my = uy;
+    if(dn < 0){ mx = ux - HIT.nx*dn; my = uy - HIT.ny*dn; }   // 파고드는 만큼만 깎는다
+    const ml = Math.hypot(mx,my);
+    if(ml < 1e-6){ out.stop=true; break; }                               // ③ 정면으로 받음
+    mx/=ml; my/=ml;
+    const step = Math.min(COL_SUB, rem);
+    const qx = out.x + mx*step, qy = out.y + my*step;
+    nearestCoast(qx, qy, HULL_R + COL_SUB, HIT2);
+    if(HIT2.d >= HULL_R){ out.x=qx; out.y=qy; rem -= step; }
+    else { out.stop=true; break; }                                       // ③ 막다른 곳
+  }
+  return out;
 }
 
 // ===== 해류 필드 (NASA OSCAR 2° u/v 격자) =====
@@ -1047,20 +1172,20 @@ function update(dt){
   curVec.x=0; curVec.y=0;
   if(CUR){ CUR.sample(ship.x, ship.y, curVec); curVec.x*=P.curGain; curVec.y*=P.curGain; }
 
-  // 이동 + 해안 충돌(축 분리 슬라이드)
+  // 이동 + 해안 충돌 (해안선 선분 · 자유거리 전진 · 접선 미끄러짐)
   // gdt = 게임시간 증분. TIMEK 이 시계 배속(1.0 = 1일/초)
   const gdt = dt * TIMEK;
-  let nx = ship.x + (ship.vx + curVec.x)*gdt;
-  let ny = ship.y + (ship.vy + curVec.y)*gdt;
-  ny = Math.max(Y_TOP, Math.min(Y_BOT, ny));   // 극 차단
-  if(!isLand(nx,ny)){ ship.x=nx; ship.y=ny; ship.grounded=false; }
-  else {
-    // 해안을 따라 미끄러짐 (한 축만 허용)
-    if(!isLand(nx, ship.y)){ ship.x=nx; ship.grounded=false; }
-    else if(!isLand(ship.x, ny)){ ship.y=ny; ship.grounded=false; }
-    else { ship.speed=0; ship.sail=0; ship.grounded=true; }   // 완전 좌초 — 돛을 내림
-  }
-  ship.x = wrapX(ship.x);
+  let mdx = (ship.vx + curVec.x)*gdt;
+  let mdy = (ship.vy + curVec.y)*gdt;
+  // 극 차단 — 해안을 따지기 전에 변위부터 잘라 둔다
+  if(ship.y+mdy < Y_TOP) mdy = Y_TOP - ship.y;
+  if(ship.y+mdy > Y_BOT) mdy = Y_BOT - ship.y;
+  moveWithCoast(ship.x, ship.y, mdx, mdy, MOVE);
+  ship.x = wrapX(MOVE.x); ship.y = MOVE.y;
+  ship.grounded = MOVE.stop;
+  // 좌초해도 돛은 그대로 둔다 — 해안을 스치는 일이 잦아졌으므로
+  // 매번 돛을 내리면 방해만 된다. 뱃머리만 돌리면 빠져나온다.
+  if(MOVE.stop) ship.speed = 0;
 
   // 항적
   wakeT+=dt;
@@ -1126,7 +1251,9 @@ function drawWorld(k){
   ctx.strokeStyle='rgba(60,40,22,.28)'; ctx.lineWidth=3.2/zoom; ctx.stroke(landPath);
   ctx.fillStyle = LAND_C; ctx.fill(landPath,'evenodd');
   ctx.strokeStyle = COAST; ctx.lineWidth = 1.1/zoom; ctx.stroke(landPath);
-  if(show.coll){ ctx.fillStyle='rgba(200,40,30,.34)'; ctx.fill(landPath,'evenodd'); }
+  if(show.coll){ ctx.fillStyle='rgba(200,40,30,.34)'; ctx.fill(landPath,'evenodd');
+                 // 선체 반지름만큼 부푼 띠 — 배가 실제로 못 들어가는 자리다
+                 ctx.strokeStyle='rgba(200,40,30,.34)'; ctx.lineWidth=HULL_R*2; ctx.stroke(landPath); }
   // 해도 상하단 경계
   ctx.strokeStyle='rgba(50,34,18,.5)'; ctx.lineWidth=2/zoom;
   ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(WORLD_W,0);

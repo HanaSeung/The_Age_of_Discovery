@@ -194,27 +194,32 @@ console.log('\n=== 6. 다른 것들이 망가지지 않았는가 ===');
       `침로가 ${(turned*180/Math.PI).toFixed(2)}° 돌았다`);
   // 육지는 여전히 막는가.
   //
-  // 주의: 이 대역에는 진짜 육지가 없다. 마스크는 캔버스에 폴리곤을 그린 뒤
-  // 픽셀을 되읽어 만드는데, 대역 캔버스의 getImageData 는 빈 배열을 돌려준다.
-  // 그래서 샌드박스에서는 온 세계가 바다다 — 실제 해안선으로 시험하면
-  // 무조건 통과해 버린다. 대신 isLand 를 가짜 벽으로 바꿔 끼워 충돌 경로만 본다.
+  // 예전에는 여기서 isLand 를 가짜 벽으로 바꿔 끼웠다. 마스크가 캔버스에 폴리곤을
+  // 그린 뒤 픽셀을 되읽어 만드는 것이라, 대역 캔버스의 getImageData 가 빈 배열을
+  // 돌려주면 샌드박스에서는 온 세계가 바다가 되기 때문이었다.
+  // 이제 배의 충돌은 land_data.js 에서 바로 뽑은 해안선 선분을 쓴다. 캔버스를 타지
+  // 않으므로 여기서도 진짜 해안선으로 시험할 수 있다 — 가짜 벽이 필요 없다.
   const hit = vm.runInContext(`(function(){
-    const p = project(-30, 20);
-    const wallX = p[0] + 40;                 // 배 동쪽 40 월드px 에 남북으로 선 벽
-    const real = isLand;
-    isLand = (wx, wy) => wx >= wallX;
-    ship.x=p[0]; ship.y=p[1]; ship.head=0; ship.speed=0; ship.sail=2;
+    const p = project(-25, 20);              // 대서양, 아프리카 서안 앞바다
+    ship.x=p[0]; ship.y=p[1]; ship.head=0;   // 정동진 — 육지로 곧장 몰아붙인다
+    ship.speed=0; ship.sail=2; ship.grounded=false;
     P.shipForce=25; P.curGain=0; gameDay=100;
-    let blocked=0;
-    for(let i=0;i<400;i++){ const x0=ship.x; update(0.05); if(ship.x===x0) blocked++; }
-    const stopped = ship.x, g = ship.grounded;
-    isLand = real;
-    return { blocked, grounded:g, gap: wallX - stopped };
+    const o={d:0,tx:0,ty:0};
+    let worst = Infinity;                    // 600프레임 동안의 최소 여유
+    for(let i=0;i<600;i++){
+      update(0.05);
+      nearestCoast(ship.x, ship.y, 4, o);
+      if(o.d < worst) worst = o.d;
+    }
+    nearestCoast(ship.x, ship.y, 4, o);
+    return { worst, clear:o.d, hullR:HULL_R, advanced:(ship.x-p[0]) };
   })()`, sb);
-  chk('강제 속력이어도 벽에 막힌다', hit.blocked > 300,
-      `400프레임 중 ${hit.blocked}프레임 전진 차단`);
-  chk('벽 코앞에서 멈춘다', hit.gap > 0 && hit.gap < 1.2,
-      `벽까지 ${hit.gap.toFixed(3)} 월드px 남기고 정지`);
+  chk('강제 속력이어도 해안선을 넘지 못한다', hit.worst >= hit.hullR - 1e-9,
+      `600프레임 최소 여유 ${hit.worst.toFixed(5)} px (선체반지름 ${hit.hullR.toFixed(5)})`);
+  chk('해안 코앞까지는 간다', hit.clear < hit.hullR*3,
+      `끝난 자리 여유 ${hit.clear.toFixed(5)} px — 멀리서 멈춘 것이 아니다`);
+  chk('막히기 전까지는 나아간다', hit.advanced > 100,
+      `동쪽으로 ${hit.advanced.toFixed(1)} 월드px 전진`);
 }
 
 console.log(`\n${fail === 0 ? '전부 통과' : '실패 있음'} - 통과 ${pass}, 실패 ${fail}\n`);
