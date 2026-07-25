@@ -43,7 +43,11 @@ function mkEl(id){
                 contains(x){ return this._s.has(x); } },
     getContext: () => makeCtx(id),
     addEventListener(){}, appendChild(){}, querySelector(){ return null; },
-    querySelectorAll(){ return []; },
+    querySelectorAll(){ return []; }, contains(){ return false; },
+    // 조정 패널은 슬라이더에서 줄 전체(부모)를 잡아 말풍선과 라벨 두 번 누르기를
+    // 단다. 부모와 그 안의 라벨까지 흉내 내 두어야 본문이 끝까지 돈다.
+    parentElement:{ addEventListener(){},
+                    querySelector(){ return { addEventListener(){} }; } },
   };
   els[id] = e; return e;
 }
@@ -53,7 +57,8 @@ const document_ = {
   getElementById(id){ return els[id] || mkEl(id); },
   createElement(t){ return mkEl('_'+t); },
   addEventListener(){}, querySelector(){ return null; },
-  body:{ classList: mkEl('_body').classList },
+  // 말풍선처럼 body 에 직접 붙이는 요소가 있다 — 흉내만 내 둔다
+  body:{ classList: mkEl('_body').classList, appendChild(){}, contains(){ return false; } },
 };
 const sandbox = {
   window:{ innerWidth:1600, innerHeight:900, devicePixelRatio:1,

@@ -87,7 +87,11 @@ function mkEl(id){
     _ctx: null,
     getContext(){ return this._ctx || (this._ctx = makeCtx()); },
     addEventListener(){}, appendChild(){}, querySelector(){ return null; },
-    querySelectorAll(){ return []; } };
+    querySelectorAll(){ return []; }, contains(){ return false; },
+    // 조정 패널은 슬라이더에서 줄 전체(부모)를 잡아 말풍선과 라벨 두 번 누르기를
+    // 단다. 부모와 그 안의 라벨까지 흉내 내 두어야 본문이 끝까지 돈다.
+    parentElement:{ addEventListener(){},
+                    querySelector(){ return { addEventListener(){} }; } } };
   els[id] = e; return e;
 }
 for(const id of ['c','cCanvas','hud','hint','toggles','tune','info','cWind','cCur'])
@@ -98,7 +102,9 @@ const document_ = {
   getElementById(id){ return els[id] || mkEl(id); },
   createElement(t){ return mkEl('_' + t + '_' + Math.random()); },
   addEventListener(){}, querySelector(){ return null; },
-  body:{ classList: mkEl('_body').classList },
+  // 말풍선처럼 body 에 직접 붙이는 요소가 있다. 실제 브라우저에는 늘 있는
+  // 손잡이라 흉내만 내 두면 된다 — 붙는지만 보고 무엇이 붙었는지는 안 본다.
+  body:{ classList: mkEl('_body').classList, appendChild(){}, contains(){ return false; } },
 };
 const sandbox = {
   window:{ innerWidth:SCRW, innerHeight:SCRH, devicePixelRatio:1,

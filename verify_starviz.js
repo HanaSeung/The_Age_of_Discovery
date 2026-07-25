@@ -57,7 +57,9 @@ function mkEl(id){
                 toggle(){}, contains(){ return false; } },
     _ctx:null, getContext(){ return this._ctx || (this._ctx = makeCtx()); },
     addEventListener(){}, appendChild(){}, querySelector(){ return null; },
-    querySelectorAll(){ return []; } };
+    querySelectorAll(){ return []; }, contains(){ return false; },
+    parentElement:{ addEventListener(){},
+                    querySelector(){ return { addEventListener(){} }; } } };
   els[id] = e; return e;
 }
 for(const id of ['c','cCanvas','hud','hint','toggles','tune','info','cWind','cCur'])
@@ -69,7 +71,7 @@ const doc = {
   getElementById: id => els[id] || mkEl(id),
   createElement: t => mkEl('_'+t+Math.random()),
   addEventListener(){}, querySelector(){ return null; },
-  body:{ classList: mkEl('_body').classList },
+  body:{ classList: mkEl('_body').classList, appendChild(){}, contains(){ return false; } },
 };
 const sandbox = {
   window:{ innerWidth:SCRW, innerHeight:SCRH, devicePixelRatio:1,

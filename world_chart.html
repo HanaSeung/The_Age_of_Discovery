@@ -117,11 +117,14 @@
      폭 배분: 내용폭 260 = 라벨66 + 사이6 + 슬라이더104 + 사이6 + 값78
      min-width:0 이 없으면 슬라이더가 자기 고유 폭(약 129px) 아래로 안 줄어들어
      값 칸을 패널 밖으로 밀어낸다. 값을 넓혀도 같은 일이 되풀이된다.
-     기본값은 줄에 적지 않고 title 로 넘긴다. 대신 바뀐 값은 색으로 표시한다 —
-     "무엇을 건드렸는가"가 "기본값이 얼마인가"보다 훨씬 자주 궁금하다. */
+     설명과 기본값은 줄에 적지 않고 말풍선으로 넘긴다. 대신 바뀐 값은 색으로
+     표시한다 — "무엇을 건드렸는가"가 "기본값이 얼마인가"보다 훨씬 자주 궁금하다. */
   #tune .row{display:flex;align-items:center;gap:6px;margin:7px 0;}
+  /* 라벨은 두 번 누르면 그 항목만 기본값으로 돌아간다. 글자가 잡히면
+     되돌리기 대신 낱말이 선택되어 버리므로 선택을 막는다. */
   #tune .row>.nm{flex:0 0 66px;color:#cdbf9a;font-size:13px;
-    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+    user-select:none;cursor:default;}
   #tune .row>input[type=range]{flex:1 1 auto;min-width:0;width:auto;height:16px;
     accent-color:#b08d57;cursor:pointer;margin:0;}
   /* 값 칸은 직접 입력도 받는다. 슬라이더로 잡기 어려운 값을 타이핑하기 위한 것이라
@@ -133,6 +136,18 @@
   #tune .row>.val:hover{border-color:#4a4234;}
   #tune .row>.val:focus{outline:none;border-color:#b08d57;background:#1a1710;}
   #tune .row>.val.ch{color:#9fe0a0;}          /* 기본값에서 바뀐 값 */
+  /* 설명 말풍선. 브라우저가 title 로 띄워 주던 것을 대신한다 — 기다림 없이
+     곧바로 뜨고, 단계형 손잡이는 값별 뜻을 둘째 줄에 함께 보인다.
+     #tune 은 overflow:hidden 이고 열고 닫을 때 transform 이 걸리므로,
+     말풍선은 패널 안이 아니라 body 에 따로 붙인다. 그래야 잘리지 않는다. */
+  #tuneTip{position:fixed;z-index:60;max-width:230px;
+    font-family:'Segoe UI','Malgun Gothic',sans-serif;
+    background:#101a19;border:1px solid #3a5450;border-radius:4px;
+    padding:6px 9px;line-height:1.5;font-size:11.5px;color:#bfd6d0;
+    pointer-events:none;opacity:0;transition:opacity .1s;}
+  #tuneTip.on{opacity:1;}
+  #tuneTip .df{color:#8fa39e;}                /* 괄호 안 기본값 */
+  #tuneTip .lg{margin-top:2px;color:#9fd6cc;} /* 값별 뜻 */
   #tune .out{background:#101a19;border:1px solid #3a5450;border-radius:4px;
     padding:8px 10px;margin-top:4px;line-height:1.7;font-size:11.5px;color:#bfd6d0;}
   #tune .out b{color:#ffd98a;font-family:monospace;font-weight:400;}
@@ -848,6 +863,7 @@ addEventListener('keydown',e=>{
   if(k==='l'){ zoomLock=!zoomLock; if(zoomLock) targetZoom=zoom; }   // [테스트] 배율 고정
   if(k==='p'){ const t=document.getElementById('tune');               // [테스트] 조정 패널
                t.classList.toggle('on');                              // 여닫기는 class 로 (전환용)
+               TUNE.tipHide();   // 줄 위에 커서를 둔 채 닫으면 말풍선만 남는다
              }
   if(k===' ' && !e.repeat){ paused = !paused; updateHint(); }         // 정지 / 재개
   if(!zoomLock){
@@ -2346,6 +2362,86 @@ const TUNE = (function(){
     ['@화면'],
     ['*zoom',     '지도 배율',   0.3, 100, 0.1, '×',    2]
   ];
+  // 손잡이마다 무엇을 하는가. 마우스를 올리면 말풍선으로 나온다.
+  // 스펙 표에 칸을 하나 더 붙이지 않고 따로 둔 이유는 표의 세로줄을 지키기
+  // 위해서다 — 긴 한글 문장이 끼면 최소·최대·간격이 눈으로 안 맞춰진다.
+  // 값 하나하나에 뜻이 있는 단계형은 DESC_LEGEND 에 둘째 줄을 따로 적는다.
+  const DESC = {
+    // ─ 배: 능력치
+    's:speedKn' : '돛을 다 펴고 순풍을 받을 때의 속력',
+    's:sailMax' : '돛을 몇 단까지 펼 수 있는가',
+    's:turnDeg' : '1초에 뱃머리를 몇 도까지 돌리는가',
+    's:nogoDeg' : '바람을 정면으로 이 각도 안쪽은 거슬러 오르지 못한다',
+    's:draft'   : '물에 잠긴 깊이. 얕은 바다를 지날 수 있는가를 가른다',
+    's:sight'   : '망대에서 내다보는 거리. 밤·구름·비가 이 값을 깎는다',
+    's:turnIdle': '멎어 있을 때 선회력의 몇 배로 도는가',
+    's:accUp'   : '목표 속력까지 오르는 데 걸리는 시간',
+    's:accDn'   : '돛을 접고 멎기까지 걸리는 시간',
+    // ─ 배: 정원
+    's:hullMax' : '이 배가 견딜 수 있는 손상의 총량',
+    's:crewMax' : '태울 수 있는 사람의 수',
+    's:holdMax' : '실을 수 있는 짐의 무게',
+    // ─ 배: 상태
+    't:hull'    : '지금 남아 있는 내구도',
+    't:crew'    : '지금 타고 있는 사람의 수',
+    't:morale'  : '선원의 사기. 물과 식량이 떨어지면 함께 떨어진다',
+    // ─ 배: 물자
+    'c:water'   : '실려 있는 물',
+    'c:food'    : '실려 있는 식량',
+    'c:timber'  : '수리에 쓰는 목재',
+    'c:shot'    : '실려 있는 포탄',
+    // ─ 배: 표시·시험
+    'shipScale' : '화면에 배를 얼마나 크게 그리는가. 항해에는 영향이 없다',
+    'nightLamp' : '밤 표현 2(등불)에서 등불이 밝히는 거리',
+    'shipForce' : '바람을 무시하고 이 속력으로 민다. 0 이면 끈다 — 해류를 따로 보려는 시험 손잡이',
+    // ─ 세계: 바람
+    'windGain'  : '실측 풍속을 몇 배로 부풀려 쓰는가',
+    'windMin'   : '이 세기 아래의 바람은 배를 밀지 못한다',
+    'windFull'  : '이 세기부터는 더 불어도 빨라지지 않는다',
+    // ─ 세계
+    'hoursPerSec':'실제 1초가 게임 속 몇 시간인가',
+    'nightMode' : '밤을 어떻게 그리는가',
+    'nightGain' : '밤을 얼마나 어둡게 덮는가. 0 이면 밤이 와도 그대로',
+    'cloudMode' : '구름을 어떻게 그리는가',
+    'cloudGain' : '구름을 얼마나 짙게 그리는가',
+    'cloudSize' : '구름 덩어리 하나의 크기. 0 이면 화면이 낼 수 있는 가장 잔 결',
+    'cloudDrift': '구름이 바람을 따라 흐르는 빠르기. 1 이면 바람과 같은 속도',
+    'precipMode': '비와 눈을 그리는가',
+    'precipGain': '빗줄기와 눈송이를 얼마나 촘촘하고 짙게 그리는가',
+    'rainSize'  : '빗줄기 하나의 길이와 굵기',
+    'snowSize'  : '눈송이 하나의 크기',
+    'precipTest': '실측을 제쳐 두고 화면 전체에 강제로 내리게 한다',
+    'visNight'  : '완전한 밤이면 감시범위를 이만큼 깎는다',
+    'visCloud'  : '하늘이 온통 덮이면 감시범위를 이만큼 깎는다',
+    'visRain'   : '세찬 비나 눈이면 감시범위를 이만큼 깎는다',
+    'starMode'  : '별을 그리는가',
+    'starCount' : '밝은 것부터 몇 개까지 그리는가 (최대 904)',
+    'starGain'  : '별을 얼마나 밝게 그리는가',
+    'skySpan'   : '하늘 원반의 크기. 1.0 이면 하늘 전체가 화면 안에 들어온다',
+    'curGain'   : '실측 해류를 몇 배로 부풀려 쓰는가',
+    // ─ 세계: 소리
+    'sndOn'     : '소리를 내는가',
+    'sndVol'    : '모든 소리의 주 음량',
+    'sndRainBright':'굵은 비의 솨아― 하는 고음이 얼마나 사는가',
+    'sndWind'   : '폭풍 바람 울음의 크기',
+    'sndHowl'   : '바람 울음의 높이. 높을수록 휘파람에 가깝다',
+    'sndWander' : '바람 울음이 오르내리는 폭',
+    'sndQ'      : '바람 울음의 공명. 좁을수록 날카롭다',
+    'sndThLow'  : '천둥 우르릉의 무게',
+    'sndThDur'  : '천둥 한 번이 이어지는 길이',
+    'sndThWob'  : '우르릉이 굴러가는 느낌',
+    // ─ 화면
+    '*zoom'     : '해도를 얼마나 확대해 보는가'
+  };
+  // 값 하나하나에 뜻이 있는 손잡이 — 말풍선 둘째 줄에 붙는다
+  const DESC_LEGEND = {
+    'nightMode' : '0 끄기 · 1 어둡게 · 2 등불 · 3 색조',
+    'cloudMode' : '0 끄기 · 1 안개 · 2 덩어리',
+    'precipMode': '0 끄기 · 1 켜기',
+    'precipTest': '0 끔(실측대로) · 1 비 · 2 눈 · 3 폭우',
+    'starMode'  : '0 끄기 · 1 켜기',
+    'sndOn'     : '0 무음 · 1 켜기'
+  };
   const SPEC = SHIP_SPEC.concat(WORLD_SPEC);
   const GRP = { s:'spec', t:'state', c:'cargo' };
   const idOf = k => k.replace(/[*:]/g, '_');          // 키를 DOM id 로
@@ -2367,6 +2463,70 @@ const TUNE = (function(){
   }
   const el = document.getElementById('tune');
   const inputs = {}, vals = {};
+
+  // ── 되돌리기 / 다시하기 (Ctrl+Z · Ctrl+Shift+Z) ──────────────────
+  // 한 걸음을 '바뀐 항목의 목록'이 아니라 '그때의 값 전부'로 적는다.
+  // [되돌리기] 버튼은 세계값과 모든 배를 한꺼번에 갈아치우므로 항목별로
+  // 적으면 형식이 둘로 갈리는데, 통째로 찍으면 슬라이더 하나든 전체
+  // 초기화든 되살리는 방법이 하나다. 숫자 백여 개짜리라 양도 가볍다.
+  const HIST = { past: [], future: [], max: 100 };
+  const snap = () => JSON.stringify({ P:P, zoom:targetZoom, ships:SHIPS });
+  function restore(s){
+    const o = JSON.parse(s);
+    Object.assign(P, o.P);
+    for(const key in SHIPS) for(const grp of ['spec','state','cargo'])
+      if(o.ships[key]) Object.assign(SHIPS[key][grp], o.ships[key][grp]);
+    if(typeof o.zoom === 'number') targetZoom = Math.max(ZMIN, Math.min(ZMAX, o.zoom));
+    // pull() 은 손이 올라가 있는 칸을 건드리지 않는다 — 슬라이더를 놓은 직후엔
+    // 그 슬라이더에 초점이 남아 있어서 되돌려도 손잡이가 제자리에 선다.
+    if(el.contains(document.activeElement)) document.activeElement.blur();
+    syncDerived(); save(); refresh();
+  }
+  // before = 건드리기 직전에 찍어 둔 값. 실제로 달라진 것이 없으면 걸음이 아니다.
+  function mark(before){
+    if(before === snap()) return;
+    HIST.past.push(before);
+    if(HIST.past.length > HIST.max) HIST.past.shift();
+    HIST.future.length = 0;          // 되돌린 뒤 새로 만졌으면 앞으로는 버린다
+  }
+  // ── 설명 말풍선 ────────────────────────────────────────────────
+  // 브라우저의 title 말풍선을 대신한다. 기다림 없이 곧바로 뜨고, 커서를
+  // 따라다니며, 단계형이면 값별 뜻이 둘째 줄에 붙는다. 패널은 다시 지어도
+  // 말풍선은 하나로 계속 쓴다 (body 에 붙어 있어 innerHTML 에 안 쓸린다).
+  const tipEl = document.createElement('div');
+  tipEl.id = 'tuneTip';
+  document.body.appendChild(tipEl);
+  function tipBind(row, key, sp){
+    row.addEventListener('mousemove', e=>{
+      const df = pdef(key);
+      const dfTxt = typeof df === 'number'
+        ? ' <span class="df">(기본값 '+df.toFixed(sp[6])+(sp[5] ? ' '+sp[5] : '')+')</span>' : '';
+      tipEl.innerHTML = (DESC[key] || '') + dfTxt +
+        (DESC_LEGEND[key] ? '<div class="lg">'+DESC_LEGEND[key]+'</div>' : '');
+      tipEl.classList.add('on');
+      // 커서 오른쪽 아래가 기본 자리. 패널이 화면 오른쪽 끝에 붙어 있어
+      // 그대로 두면 상자가 화면 밖으로 나가므로, 넘치면 왼쪽으로 뒤집는다.
+      const w = tipEl.offsetWidth, h = tipEl.offsetHeight;
+      let x = e.clientX + 14, y = e.clientY + 18;
+      if(x + w > innerWidth  - 4) x = e.clientX - w - 14;
+      if(y + h > innerHeight - 4) y = e.clientY - h - 10;
+      tipEl.style.left = Math.max(4, x)+'px';
+      tipEl.style.top  = Math.max(4, y)+'px';
+    });
+    row.addEventListener('mouseleave', ()=>tipEl.classList.remove('on'));
+  }
+  const tipHide = ()=>tipEl.classList.remove('on');
+
+  function undo(){
+    if(!HIST.past.length) return;
+    HIST.future.push(snap());
+    restore(HIST.past.pop());
+  }
+  function redo(){
+    if(!HIST.future.length) return;
+    HIST.past.push(snap());
+    restore(HIST.future.pop());
+  }
 
   // 메뉴 — 일반·설정은 아직 비어 있다. 지금 내용은 전부 제작용이라 디버그로 들어간다.
   const TABS = [['gen','일반'], ['set','설정'], ['dbg','디버그']];
@@ -2431,7 +2591,7 @@ const TUNE = (function(){
           open = true; continue;
         }
         const [k,lab,mn,mx,st] = sp, id = idOf(k);
-        s += '<div class="row" title="기본값 '+pdef(k)+'"><span class="nm">'+lab+'</span>'+
+        s += '<div class="row" data-k="'+k+'"><span class="nm">'+lab+'</span>'+
              '<input type="range" id="i_'+id+'" min="'+mn+'" max="'+mx+'" step="'+st+'">'+
              '<input type="text" class="val" id="v_'+id+'" inputmode="decimal" '+
              'spellcheck="false" autocomplete="off"></div>';
@@ -2464,6 +2624,23 @@ const TUNE = (function(){
       const key = sp[0], id = idOf(key);
       const inp = document.getElementById('i_'+id);
       inputs[id] = inp; vals[id] = document.getElementById('v_'+id);
+      const row = inp.parentElement;
+      tipBind(row, key, sp);                            // 설명 말풍선
+      // 라벨을 두 번 누르면 이 항목만 기본값으로. 값 칸은 타이핑용이라 건드리지 않는다.
+      row.querySelector('.nm').addEventListener('dblclick', ()=>{
+        const df = pdef(key);
+        if(typeof df !== 'number') return;              // 지도 배율은 기본값이 없다
+        if(Math.abs(pget(key) - df) < 1e-9) return;     // 이미 기본값이면 걸음이 아니다
+        const b = snap();
+        pset(key, df); save(); refresh(); mark(b);
+      });
+      // 끄는 동안은 값만 따라 움직이고, 손을 놓을 때 한 걸음으로 적는다.
+      // 끌기 하나가 걸음 하나다 — 안 그러면 Ctrl+Z 를 수십 번 눌러야 제자리로 온다.
+      let held = null;
+      const hold = ()=>{ if(held === null) held = snap(); };
+      inp.addEventListener('pointerdown', hold);        // 마우스로 끌 때
+      inp.addEventListener('keydown', hold);            // 화살표 키로 옮길 때
+      inp.addEventListener('change', ()=>{ if(held !== null){ mark(held); held = null; } });
       inp.addEventListener('input', ()=>{
         pset(key, parseFloat(inp.value));
         save(); refresh();
@@ -2472,7 +2649,9 @@ const TUNE = (function(){
       // 반영은 Enter 나 칸을 벗어날 때만. 입력 도중에 반영하면 '2000' 을 치려고
       // '2' 를 누른 순간 2 가 되어 버린다.
       const box = vals[id];
-      box.addEventListener('focus', ()=>box.select());   // 곧바로 덮어쓰게
+      let boxHeld = null;
+      // 칸에 들어설 때 찍어 두고 Enter(또는 칸을 벗어날 때) 한 걸음으로 적는다
+      box.addEventListener('focus', ()=>{ box.select(); boxHeld = snap(); });
       box.addEventListener('keydown', e=>{
         if(e.key === 'Enter'){ e.preventDefault(); box.blur(); }
         if(e.key === 'Escape'){ e.preventDefault(); pull(); box.blur(); }
@@ -2485,6 +2664,7 @@ const TUNE = (function(){
         // 아래로만 막는다. 0 이 들어가면 나눗셈이 무한대가 되는 값들이 있다.
         pset(key, Math.max(sp[2], v));
         save(); refresh();
+        if(boxHeld !== null){ mark(boxHeld); boxHeld = null; }
       });
     }
     // 배를 바꾸면 값이 통째로 달라지므로 패널을 다시 짓는다
@@ -2669,13 +2849,16 @@ const TUNE = (function(){
     }catch(e){}
   }
   function reset(){
+    const b = snap();          // 누르기 직전의 값 전부 — Ctrl+Z 로 되살릴 수 있게
     Object.assign(P, P0);
     // 배도 함께 되돌린다 — 물자를 다 써 놓고 시험하다 한 번에 채우려면 이쪽이 편하다
     for(const key in SHIPS) for(const grp of ['spec','state','cargo'])
       Object.assign(SHIPS[key][grp], SHIP0[key][grp]);
     syncDerived();
+    // 저장값은 지우기만 하고 되살리지 않는다. Ctrl+Z 로 값이 돌아오면
+    // save() 가 다시 쓰므로 결과는 같다.
     try{ localStorage.removeItem(LS); }catch(e){}
-    build(); refresh();
+    build(); refresh(); mark(b);
   }
   function copy(){
     const sp = SHIP.spec, st = SHIP.state, cg = SHIP.cargo;
@@ -2715,8 +2898,20 @@ const TUNE = (function(){
     else { console.log(t); done(); }
   }
 
+  // 되돌리기 단축키. 패널이 열려 있을 때만 듣는다 — 닫아 두고 항해하다
+  // 잘못 눌러 값이 뒤바뀌면 원인을 못 찾는다.
+  addEventListener('keydown', e=>{
+    if(!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'z') return;
+    if(!el.classList.contains('on')) return;
+    // 값 칸에 글자를 치는 중이면 브라우저의 글자 되돌리기가 먼저다
+    if(e.target.classList && e.target.classList.contains('val')) return;
+    e.preventDefault();
+    tipHide();                 // 화면이 통째로 바뀌므로 말풍선은 접는다
+    if(e.shiftKey) redo(); else undo();
+  });
+
   load(); build(); refresh();
-  return {refresh};
+  return {refresh, tipHide};
 })();
 
 function loop(now){

@@ -43,11 +43,13 @@ function makeCtx(){ const c={}, n=()=>()=>{};
 const els={}; function mkEl(id){ const e={id,style:{},width:0,height:0,innerHTML:'',
   textContent:'',value:'',classList:{_s:new Set(),add(){},remove(){},toggle(){},contains(){return false}},
   _ctx:null,getContext(){return this._ctx||(this._ctx=makeCtx())},addEventListener(){},
-  appendChild(){},querySelector(){return null},querySelectorAll(){return []}};
+  appendChild(){},querySelector(){return null},querySelectorAll(){return []},contains(){return false},
+  parentElement:{addEventListener(){},querySelector(){return {addEventListener(){}}}}};
   els[id]=e; return e; }
 for(const id of ['c','cCanvas','hud','hint','toggles','tune','info','cWind','cCur']) mkEl(id);
 const doc={getElementById:id=>els[id]||mkEl(id),createElement:t=>mkEl('_'+t+Math.random()),
-  addEventListener(){},querySelector(){return null},body:{classList:mkEl('_b').classList}};
+  addEventListener(){},querySelector(){return null},
+  body:{classList:mkEl('_b').classList,appendChild(){},contains(){return false}}};
 const sb={window:{innerWidth:1600,innerHeight:900,devicePixelRatio:1,addEventListener(){},
   matchMedia:()=>({matches:false})},document:doc,console:{log(){},warn(){},error(){}},
   localStorage:{getItem:()=>null,setItem(){},removeItem(){}},performance:{now:()=>0},

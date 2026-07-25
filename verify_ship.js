@@ -104,7 +104,11 @@ chk('띠가 메뉴보다 앞이다', /'<div class="head" id="tHead"><\/div><div 
 chk('띠가 스크롤 밖이다', /#tune \.head\{flex:0 0 auto/.test(src));
 chk('날짜를 표기 표에서 만든다', /const f = DATEFMT\.find\(x => x\[0\] === dateFmt\)/.test(src));
 chk('표기마다 글자 크기를 함께 준다', /'<b style="font-size:'\+f\[3\]\+'px">'/.test(src));
-chk('항해일이 그 아래 줄이다', /<em>항해 <b>'\+\(Math\.floor\(gameDay - voyageStartDay\)\+1\)/.test(src));
+// 지켜야 할 것은 둘이다 — 화면에 찍는 모양, 그리고 날수를 세는 규칙.
+// 그 사이의 변수 이름이나 줄 나눔은 자유롭게 두어야 코드가 조금 바뀔 때마다
+// 검사가 헛되이 무너지지 않는다 (날씨 아이콘을 넣을 때 실제로 그랬다).
+chk('항해일이 그 아래 줄이다', /항해 <b>'\+\w+\+'<\/b>일차/.test(src));
+chk('항해일수를 출항일부터 센다', /Math\.floor\(gameDay - voyageStartDay\) \+ 1/.test(src));
 chk('em 이 블록으로 줄을 바꾼다', /#tune \.head em\{display:block/.test(src));
 
 console.log('\n=== 5-3-1. 숫자 글꼴이 한 벌인가 ===');
@@ -385,7 +389,7 @@ console.log('\n=== 5-7. 디버그 탭도 같은 한 줄형인가 ===');
 const build = (src.match(/function build\(\)\{[\s\S]*?\r?\n  \}/) || [''])[0];
 chk('한 줄에 [라벨][슬라이더][값] 이다',
     // 값 칸은 span 이 아니라 직접 입력되는 <input class="val"> 다 (타이핑 기능)
-    /<div class="row" title="기본값[\s\S]{0,120}<span class="nm">'\+lab[\s\S]{0,200}<input type="range"[\s\S]{0,160}<input type="text" class="val"/.test(build));
+    /<div class="row" data-k="[\s\S]{0,120}<span class="nm">'\+lab[\s\S]{0,200}<input type="range"[\s\S]{0,160}<input type="text" class="val"/.test(build));
 chk('.row 가 가로 배치다', /#tune \.row\{display:flex;align-items:center/.test(src));
 chk('슬라이더가 남는 폭을 먹는다', /#tune \.row>input\[type=range\]\{flex:1 1 auto/.test(src));
 chk('값이 오른쪽 정렬이다', /#tune \.row>\.val\{[^}]*text-align:right/.test(src));
@@ -409,12 +413,55 @@ chk('슬라이더에 자리가 남는다', sldW >= 90,
 const rValFS = +((src.match(/#tune \.row>\.val\{[^}]*font-size:(\d+)px/) || [])[1]);
 chk('가장 긴 값이 들어간다', 3*(rValFS*0.55) + 4*(rValFS*0.75) <= rVal,
     `"120 °/초" 약 ${(3*(rValFS*0.55)+4*(rValFS*0.75)).toFixed(0)}px <= ${rVal}px`);
-// 기본값은 줄에서 빼고 title 로 넘겼다
-chk('기본값을 title 로 넘긴다', /title="기본값 '\+pdef\(k\)\+'"/.test(build));
+// 설명과 기본값은 줄에서 빼고 말풍선으로 넘겼다
+chk('옛 title 말풍선은 없앴다', !/title="기본값/.test(src));
 chk('줄에 기본값을 적지 않는다', !/d_'\+id/.test(build));
 chk('바뀐 값을 색으로 알린다', /classList\.toggle\('ch', typeof df === 'number'/.test(src));
 chk('바뀜 색 규칙이 있다', /#tune \.row>\.val\.ch\{color:/.test(src));
 chk('zoom 처럼 기본값 없는 항목은 색이 안 붙는다', /typeof df === 'number'/.test(src));
+
+console.log('\n=== 5-8. 설명 말풍선 ===');
+// 스펙에 적힌 손잡이 전부가 설명을 가졌는가. 하나라도 빠지면 빈 말풍선이 뜬다.
+const specBody = (src.match(/const SHIP_SPEC = \[[\s\S]*?\n  \];[\s\S]*?const WORLD_SPEC = \[[\s\S]*?\n  \];/) || [''])[0];
+const specKeys = [...specBody.matchAll(/\['([^'@][^']*)',/g)].map(m => m[1]);
+const descBody = (src.match(/const DESC = \{[\s\S]*?\n  \};/) || [''])[0];
+const descKeys = [...descBody.matchAll(/'([^']+)'\s*:/g)].map(m => m[1]);
+const missing = specKeys.filter(k => !descKeys.includes(k));
+chk('손잡이가 하나도 안 빠졌다', specKeys.length > 50,
+    `스펙 ${specKeys.length}개 · 설명 ${descKeys.length}개`);
+chk('설명 없는 손잡이가 없다', missing.length === 0,
+    missing.length ? '빠짐: ' + missing.join(', ') : '전부 있음');
+chk('설명에 남는 것이 없다', descKeys.every(k => specKeys.includes(k)),
+    '쓰이지 않는 설명: ' + descKeys.filter(k => !specKeys.includes(k)).join(', '));
+// 값 하나하나에 뜻이 있는 손잡이는 둘째 줄이 있어야 한다
+const legendBody = (src.match(/const DESC_LEGEND = \{[\s\S]*?\n  \};/) || [''])[0];
+const legendKeys = [...legendBody.matchAll(/'([^']+)'\s*:/g)].map(m => m[1]);
+// 간격 1 에 최대 3 이하 = 단계로 고르는 손잡이. 배율·거리 따위와 구별된다.
+const stepKeys = [...specBody.matchAll(/\['([^'@][^']*)',[^\]]*?,\s*0,\s*([0-3]),\s*1,/g)].map(m => m[1]);
+chk('단계형은 값별 뜻을 담았다', stepKeys.every(k => legendKeys.includes(k)),
+    '단계형 ' + stepKeys.length + '개 / 뜻 ' + legendKeys.length + '개');
+chk('말풍선을 body 에 따로 붙인다', /tipEl\.id = 'tuneTip'[\s\S]{0,80}document\.body\.appendChild/.test(src));
+chk('말풍선 규칙이 있다', /#tuneTip\{position:fixed/.test(src));
+chk('커서를 따라간다', /row\.addEventListener\('mousemove'/.test(src));
+chk('화면 밖으로 나가면 뒤집는다', /x \+ w > innerWidth[\s\S]{0,60}y \+ h > innerHeight/.test(src));
+chk('괄호 안에 기본값을 적는다', /class="df">\(기본값 /.test(src));
+chk('패널을 닫으면 말풍선도 접는다', /TUNE\.tipHide\(\)/.test(src));
+
+console.log('\n=== 5-9. 되돌리기 · 다시하기 ===');
+chk('걸음을 값 전부로 찍는다', /const snap = \(\) => JSON\.stringify\(\{ P:P, zoom:targetZoom, ships:SHIPS \}\)/.test(src));
+chk('기억은 100걸음까지다', /max: 100/.test(src) && /HIST\.past\.length > HIST\.max\) HIST\.past\.shift/.test(src));
+chk('값이 그대로면 걸음이 아니다', /if\(before === snap\(\)\) return;/.test(src));
+chk('새로 만지면 앞으로는 버린다', /HIST\.future\.length = 0;/.test(src));
+chk('슬라이더는 놓을 때 한 걸음이다',
+    /pointerdown', hold\)[\s\S]{0,200}'change', \(\)=>\{ if\(held !== null\)\{ mark\(held\)/.test(src));
+chk('값 칸은 들어설 때 찍는다', /box\.select\(\); boxHeld = snap\(\)/.test(src));
+chk('라벨 두 번 누르면 기본값으로', /'dblclick'[\s\S]{0,320}pset\(key, df\); save\(\); refresh\(\); mark\(b\)/.test(src));
+chk('[되돌리기]도 걸음에 넣는다', /build\(\); refresh\(\); mark\(b\);/.test(src));
+chk('Ctrl\+Z 는 되돌리기, Shift 를 더하면 다시하기',
+    /e\.key\.toLowerCase\(\) !== 'z'[\s\S]{0,300}e\.shiftKey\) redo\(\); else undo\(\)/.test(src));
+chk('패널이 열렸을 때만 듣는다', /if\(!el\.classList\.contains\('on'\)\) return;/.test(src));
+chk('값 칸 타이핑 중이면 브라우저에 맡긴다', /classList\.contains\('val'\)\) return;/.test(src));
+chk('되돌릴 때 손이 올라간 칸을 비운다', /el\.contains\(document\.activeElement\)\) document\.activeElement\.blur\(\)/.test(src));
 
 console.log(`\n${fail === 0 ? '전부 통과' : '실패 있음'} — 통과 ${pass}, 실패 ${fail}\n`);
 process.exit(fail ? 1 : 0);
