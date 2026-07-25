@@ -37,7 +37,7 @@ chk('별 관측이 같은 하늘을 본다 (skyClearAt)',
 chk('별 쪽의 옛 인라인 계산이 사라졌다',
     !/night \* \(1 - Math\.min\(1, cloudOpacityAt/.test(src));
 chk('시야도 같은 하늘을 본다', /const cloud = 1 - skyClearAt\(ship\.x, ship\.y\)/.test(src));
-chk('내리는 동안은 하늘이 닫힌다 (skyClearAt=0)', /if\(p\.rate > 0\) return 0;/.test(src));
+chk('세찬 비면 하늘이 닫힌다 (문턱 이상)', /if\(p\.rate >= SKY_RAIN_HIDE\) return 0;/.test(src));
 chk('폭풍 판정이 한 함수다 (inStorm)', /function inStorm\(\)/.test(src));
 chk('어둠이 한 함수를 거친다 (darknessNow)', (function(){
   // 밤막·시야·별 셋 다 darknessNow 를 읽어야 폭풍이 한꺼번에 입혀진다
@@ -60,10 +60,12 @@ function grabFn(name){
 const upFn  = grabFn('updateSight');
 const skyFn = grabFn('skyClearAt');
 const minC  = (src.match(/const SIGHT_MIN = [^;]+;/) || [''])[0];
+const hideC = (src.match(/const SKY_RAIN_HIDE = [^;]+;/) || [''])[0];
 const nowC  = (src.match(/const sightNow = \{[^;]+;/) || [''])[0];
 chk('updateSight 본문을 떼어냈다', !!upFn);
 chk('skyClearAt 본문을 떼어냈다', !!skyFn);
 chk('SIGHT_MIN 을 떼어냈다', !!minC);
+chk('SKY_RAIN_HIDE 문턱을 떼어냈다', !!hideC);
 if(!upFn || !skyFn){ console.log('\n추출 실패로 중단.'); process.exit(1); }
 
 // 입력 셋(밤·구름·비)은 이 스크립트가 쥔다. 실제 자료 쪽은 verify_precip 과
@@ -82,7 +84,7 @@ vm.runInContext([
   // 폭풍 판정은 이 스크립트가 쥔다. 실제 조건(기상 시험/폭풍 객체)은 게임 쪽 몫.
   'function inStorm(){ return STORM; }',
   grabFn('darknessNow'),
-  minC, skyFn, nowC, upFn
+  minC, hideC, skyFn, nowC, upFn
 ].join('\n'), box);
 
 function S(dark, cloud, rain, sight, p){
@@ -96,14 +98,21 @@ function S(dark, cloud, rain, sight, p){
 }
 
 // ===== 2-2. 하늘이 닫히는가 =====
-// 별 관측이 쓰는 바로 그 함수. 내리기 시작하면 구름 틈이 얼마든 0 이 된다 —
-// "눈 오는 밤 별하늘" 은 없다.
+// 별 관측이 쓰는 바로 그 함수. 세찬 비(문턱 이상)면 구름 틈이 얼마든 0 이
+// 되지만, 약한 비는 별을 지우지 않는다 — 떠가는 구름 자락에 별이 깜빡이지
+// 않게 하려는 것이다. 폭우(rate 1)는 반드시 닫힌다.
 console.log('\n=== 2-2. 하늘 ===');
 box.CLOUD = 0.3; box.RAIN = 0;
 chk('맑은 하늘은 구름만큼만 닫힌다',
     near(vm.runInContext('skyClearAt(0,0)', box), 0.7));
+box.RAIN = 0.2;
+chk('약한 비는 별을 지우지 않는다 — 구름만큼만',
+    near(vm.runInContext('skyClearAt(0,0)', box), 0.7));
 box.RAIN = 0.6;
-chk('내리는 동안은 완전히 닫힌다 — 별 전멸',
+chk('세찬 비(문턱 이상)는 완전히 닫힌다 — 별 전멸',
+    vm.runInContext('skyClearAt(0,0)', box) === 0);
+box.RAIN = 1.0;
+chk('폭우는 반드시 닫힌다',
     vm.runInContext('skyClearAt(0,0)', box) === 0);
 box.CLOUD = 0; box.RAIN = 0;
 
@@ -125,8 +134,10 @@ const all = S(1, 1, 1);
 chk('셋이 겹치면 곱이다 (0.15×0.65×0.50)', near(all.f, 0.15*0.65*0.50),
     (all.f*100).toFixed(2) + '% → ' + all.km.toFixed(2) + ' km');
 const half = S(0.5, 0.5, 0.5);
-chk('반쯤 오는 비도 하늘은 통째로 닫는다',
-    near(half.f, (1-0.425)*(1-0.35)*(1-0.25)), (half.f*100).toFixed(1) + '%');
+// 비 0.5 는 문턱(0.55) 아래라 하늘을 닫지 않는다 — 구름 몫은 0.5 그대로.
+// 그래서 세 항이 각자 곱해진다: 밤 0.5, 구름 0.5, 비 0.5.
+chk('문턱 아래 비는 구름을 대신 채우지 않는다',
+    near(half.f, (1-0.5*0.85)*(1-0.5*0.35)*(1-0.5*0.5)), (half.f*100).toFixed(1) + '%');
 
 // ===== 3-2. 폭풍의 어둠 =====
 // 폭풍 속은 해를 묻지 않는다 — 정오에 들어가도 한밤이다. 낮과 밤의 시야가

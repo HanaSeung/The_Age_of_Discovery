@@ -228,6 +228,7 @@
 <script src="precip_data.js"></script>
 <script src="airtemp_data.js"></script>
 <script src="star_data.js"></script>
+<script src="ship_sprite.js"></script>
 <script>
 "use strict";
 // (지도 데이터는 land_data.js 로 분리됨 - build_land.py)
@@ -1109,6 +1110,21 @@ function drawWorld(k){
   ctx.moveTo(0,WORLD_H); ctx.lineTo(WORLD_W,WORLD_H); ctx.stroke();
 }
 
+// ===== 배 그림 (스프라이트) =====
+// ship_sprite.js 가 실어 준 두 장(돛 편 것/접은 것)을 Image 로 미리 얹는다.
+// 뱃머리는 +x 를 본다 — 도형 배와 같은 방향이라 회전 보정이 필요 없다.
+// 검증(Node)에는 Image 가 없다. 그때는 sprite.ready 가 늘 false 로 남아
+// 예전 도형 배가 대신 그려지므로 verify_* 가 그대로 돈다.
+const shipSprite = { ready:false, set:null, furl:null };
+(function loadShipSprite(){
+  if(typeof Image==='undefined' || typeof SHIP_SPRITE==='undefined') return;
+  let left = 2;
+  const done = ()=>{ if(--left===0) shipSprite.ready = true; };
+  const mk = src => { const im = new Image(); im.onload = done; im.src = src; return im; };
+  shipSprite.set  = mk(SHIP_SPRITE.set);
+  shipSprite.furl = mk(SHIP_SPRITE.furl);
+})();
+
 // 돛을 펴는 순서 — 가운데(주돛)부터 뒤·앞으로 번갈아 넓혀 간다.
 //   6단: 자리 3,4,2,5,1,6  /  4단: 2,3,1,4  /  5단: 3,4,2,5,1
 // 반환값 rank[자리index] = 몇 번째로 펴지는가(0부터). rank < ship.sail 이면 펴진 상태.
@@ -1144,6 +1160,21 @@ function drawShip(){
   // 선박 (화면 고정 크기 — 축척 물체가 아닌 해도 기호)
   ctx.save(); ctx.translate(W/2,H/2); ctx.rotate(ship.head);
   const s=P.shipScale;   // 선체 길이 = 29*s 화면px (기본 1.15 ≈ 33px)
+
+  // 그림이 준비됐으면 도형 대신 스프라이트를 그린다. 돛을 폈으면(sail>0) 편 그림,
+  // 다 접었으면 접은 그림. 그림의 선체 길이(hullLen)가 도형과 같은 29*s px 이 되도록
+  // 맞춰, 배 크기 슬라이더를 그대로 따른다. 그림 한가운데가 곧 선체 한가운데다.
+  if(shipSprite.ready){
+    const sp = ship.sail>0 ? shipSprite.set : shipSprite.furl;
+    const k  = (29*s) / SHIP_SPRITE.hullLen;        // 그림 px → 화면 px
+    const dw = SHIP_SPRITE.w * k, dh = SHIP_SPRITE.h * k;
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(sp, -dw/2, -dh/2, dw, dh);
+    ctx.restore();
+    return;
+  }
+
+  // ---- 이하 예전 도형 배 (그림이 아직 안 실렸거나 검증 환경일 때) ----
   // 선체
   ctx.fillStyle='#4a2f18'; ctx.strokeStyle='#2c1a0c'; ctx.lineWidth=1.4;
   ctx.beginPath();
@@ -1554,13 +1585,22 @@ function precipAt(wx, wy, out){
   // 1과 3(폭우)은 판정으로는 같은 비다 — 폭우의 몸집은 precipVeil 이 입힌다.
   const tst = Math.round(P.precipTest);
   if(tst){ out.type = (tst === 2 ? PRECIP_SNOW : PRECIP_RAIN); out.rate = 1; return out; }
+  // 폭풍 속은 비를 보장한다. 폭풍이 마른 바다로 흘러가거나 구름 노이즈가 얇은
+  // 순간에도, 폭풍 세기만큼은 비가 온다 — 어둠·번개만 있고 비가 없으면 어색하다.
+  // 세기에 비례하므로 중심은 세찬 비, 가장자리는 약한 비가 되어 번짐과도 맞는다.
+  // 눈이 될 만큼 추우면 폭풍이라도 눈으로 친다.
+  const sa = (typeof stormAt === 'function') ? stormAt() : 0;
+  if(sa > 0){
+    out.type = airTempC(wx, wy) < PRECIP_ST ? PRECIP_SNOW : PRECIP_RAIN;
+    out.rate = Math.max(out.rate, sa);   // 실측 비가 더 세면 그쪽을 따른다
+  }
   if(!PRECIP) return out;
   const here = cloudOpacityAt(wx, wy);      // 지금 구름 밑인가
-  if(here <= 0) return out;
+  if(here <= 0) return out;                  // 폭풍이 보장한 비(sa)는 위에서 이미 넣었다
   const mmd = PRECIP.sample(wx, wy, monthF());          // 원래 비가 잦은 곳인가
   if(mmd <= PRECIP_MIN) return out;
   const wet = Math.min(1, (mmd - PRECIP_MIN)/(PRECIP_FULL - PRECIP_MIN));
-  out.rate = wet * here;
+  out.rate = Math.max(out.rate, wet * here);   // 폭풍 보장분과 견줘 센 쪽을 따른다
   out.type = airTempC(wx, wy) < PRECIP_ST ? PRECIP_SNOW : PRECIP_RAIN;
   return out;
 }
@@ -1624,10 +1664,9 @@ function precipVeil(){
   // 어둑하고, 밤이면 이 위에 밤막이 겹쳐 더 캄캄해진다. 배가 선 자리
   // 기준(밤 sunAlt 와 같은 관례). 눈은 여기 해당 없다 — 눈 하늘은 오히려
   // 희부옇고, 그쪽 장막은 cloudVeil 이 그린다.
-  // 폭우(기상 시험 3) — 비의 극단. 줄기가 1.6배 길고 굵으며 1.5배 빨리
-  // 떨어지고 그늘이 짙다. 지금은 시험 전용이지만, 폭풍이 들어오면 폭풍의
-  // 한복판에서 이 몸을 그대로 쓴다.
-  const heavy = Math.round(P.precipTest) === 3;
+  // 폭우 — 비의 극단. 줄기가 1.6배 길고 굵으며 1.5배 빨리 떨어지고 그늘이
+  // 짙다. 폭풍 속(자연·시험 3 모두)이면 이 몸을 그대로 쓴다.
+  const heavy = inStorm();
   precipAt(ship.x, ship.y, precipHere);
   if(precipHere.type === PRECIP_RAIN && precipHere.rate > 0){
     ctx.fillStyle = 'rgba('+GLOOM_RGB+','+
@@ -1701,11 +1740,120 @@ function precipVeil(){
 // 만들고 보여주는 데까지다 — 규칙이 들어올 때 읽을 자리는 sightNow 하나다.
 const SIGHT_MIN = 0.5;    // 아무리 캄캄해도 뱃전은 보인다 (km)
 
-// 지금 폭풍 속인가. 현재는 기상 시험 3 만이 폭풍이다 — 폭풍 본체(이동 객체)가
-// 들어오면 여기에 '반경 안' 판정이 붙는다. 폭우 표현·구름 걷기·어둠 고정·
-// 번개가 전부 이 한 함수를 보므로, 폭풍은 이것 하나만 켜면 통째로 입혀진다.
+// ===== 폭풍 — 이동하는 날씨 객체 =====
+// 배 주변 바다에 폭풍 몇 개를 띄워 둔다. 배가 그 안에 들면 폭우·번개·어둠·
+// 구름 걷힘·바람 소리가 한꺼번에 입혀진다(전부 stormAt/inStorm 한 군데를 본다).
+//   • 자리: 배 주변에만. 멀어지면 지우고 새로 만든다(해류 파티클과 같은 방식).
+//   • 생김: 비가 잦은 바다일수록 잘 생긴다(실측 강수량을 확률로). 사막 앞바다엔 안 뜬다.
+//   • 이동: 바람을 타되 조금 빗겨 흐른다(실제 저기압처럼). 화면이 아니라 월드 좌표로 움직인다.
+//   • 일생: 생겨서 자라고 사그라든다. 세기가 그 일생을 담아 0~1 로 오르내린다.
+//   • 가장자리: 중심 1, 밖으로 갈수록 부드럽게 0. 그래서 '다가온다'가 읽힌다.
+// 항해 영향(속도·선체)은 아직 없다 — 이번엔 겉모습만. inStorm 은 '세기>0'.
+const STORM_MAX      = 3;        // 배 주변에 동시에 둘 폭풍 수의 상한
+const STORM_R_KM     = 900;      // 폭풍 반경(km). 화면보다 조금 커 들락날락하는 맛이 난다
+const STORM_EDGE     = 0.35;     // 이 안쪽 비율부터 세기가 1 (가장자리 0.65 구간이 번짐)
+const STORM_LIFE     = 6.0;      // 폭풍 하나의 수명(게임일). 생성~소멸
+const STORM_GROW     = 0.22;     // 생성·소멸에 쓰는 여닫이 시간의 비율(양끝 각각)
+const STORM_DRIFT    = 0.55;     // 바람을 타는 정도(1=바람과 같은 속도)
+const STORM_SKEW     = 0.30;     // 바람 방향에서 빗겨 흐르는 정도(저기압의 빗김)
+const STORM_SPAWN    = 0.6;      // 하루에 폭풍 하나가 생길 기대 횟수(강수량으로 곱해짐)
+const STORM_WET_REF  = 6.0;      // 이 강수량(mm/일)에서 생성 확률이 최대. p90 언저리
+const STORM_R_PX     = STORM_R_KM / KM_PER_PX;   // 반경(월드px)
+
+// 폭풍 하나: 중심(cx,cy)·나이(age)·수명(life). 세기는 나이로 매 프레임 잰다.
+const STORMS = (function(){
+  const list = [];
+  const v = {x:0,y:0};
+
+  // 배에서 이만큼(월드px) 밖이면 폭풍을 지운다 — 화면 대각선 + 반경만큼 여유
+  function cullDist(){ return Math.hypot(W,H)/zoom*0.6 + STORM_R_PX; }
+
+  // 배 주변 아무 바다에 폭풍 후보 자리를 하나 고른다(육지는 피한다)
+  function pickSpot(){
+    const reach = Math.hypot(W,H)/zoom*0.55 + STORM_R_PX*0.5;
+    for(let t=0;t<8;t++){
+      const a = Math.random()*Math.PI*2, r = reach*(0.4+0.6*Math.random());
+      const x = ship.x + Math.cos(a)*r, y = ship.y + Math.sin(a)*r;
+      if(y < Y_TOP || y > Y_BOT) continue;
+      if(!isLand(x,y)) return {x:wrapX(x), y};
+    }
+    return null;
+  }
+
+  // 나이 → 세기 0~1. 양끝은 부드럽게 여닫고 가운데는 1. sstep 을 빌린다.
+  function lifeAmp(age, life){
+    const t = age/life;                 // 0~1
+    if(t <= 0 || t >= 1) return 0;
+    const g = STORM_GROW;
+    if(t < g)      return sstep(0, g, t);        // 자라는 중
+    if(t > 1-g)    return sstep(1, 1-g, t);      // 사그라드는 중
+    return 1;
+  }
+
+  function spawn(){
+    const s = pickSpot();
+    if(!s) return;
+    // 그 자리가 비가 잦은 바다인가 — 강수량으로 생성을 거른다
+    const wet = PRECIP ? PRECIP.sample(s.x, s.y, monthF()) : 2;
+    const p = Math.min(1, wet/STORM_WET_REF);
+    if(Math.random() > p) return;               // 메마른 바다면 대개 안 생긴다
+    list.push({ cx:s.x, cy:s.y, age:0, life:STORM_LIFE*(0.7+0.6*Math.random()) });
+  }
+
+  function step(dt){
+    if(!dt || dt<0) return;
+    const gd = dt*TIMEK;                        // 게임일
+    // 생성 — 자리 상한 아래일 때만, 강수량으로 걸러 가끔
+    if(list.length < STORM_MAX && Math.random() < STORM_SPAWN*gd){ spawn(); }
+    // 이동·나이
+    const cull = cullDist();
+    for(let i=list.length-1;i>=0;i--){
+      const st = list[i];
+      st.age += gd;
+      if(st.age >= st.life){ list.splice(i,1); continue; }
+      if(WIND){
+        WIND.sample(st.cx, st.cy, monthF(), v);
+        v.x *= P.windGain; v.y *= P.windGain;
+        // 바람을 타되 조금 빗겨 흐른다(수직 성분을 살짝 섞는다)
+        const dx = v.x - v.y*STORM_SKEW, dy = v.y + v.x*STORM_SKEW;
+        const k = 86.4/KM_PER_PX * gd * STORM_DRIFT;   // m/s → 월드px/게임일
+        st.cx = wrapX(st.cx + dx*k); st.cy += dy*k;
+      }
+      // 배에서 너무 멀어지면 지운다
+      let ddx = st.cx - ship.x;
+      if(ddx > WORLD_W/2) ddx -= WORLD_W; else if(ddx < -WORLD_W/2) ddx += WORLD_W;
+      if(Math.hypot(ddx, st.cy - ship.y) > cull){ list.splice(i,1); }
+    }
+  }
+
+  // 한 점의 폭풍 세기 0~1. 여러 폭풍이 겹치면 가장 센 것을 따른다.
+  function at(wx, wy){
+    let best = 0;
+    for(const st of list){
+      let dx = wx - st.cx;
+      if(dx > WORLD_W/2) dx -= WORLD_W; else if(dx < -WORLD_W/2) dx += WORLD_W;
+      const d = Math.hypot(dx, wy - st.cy);
+      if(d >= STORM_R_PX) continue;
+      const rr = 1 - d/STORM_R_PX;                 // 중심 1, 가장자리 0
+      const edge = sstep(0, 1-STORM_EDGE, rr);     // 가장자리만 부드럽게
+      const amp = edge * lifeAmp(st.age, st.life);
+      if(amp > best) best = amp;
+    }
+    return best;
+  }
+
+  return { step, at, list };
+})();
+
+// 지금 배가 있는 자리의 폭풍 세기 0~1. 기상 시험 3 은 강제로 최대(1)로 친다 —
+// 자연 폭풍과 별개의 확인용 손잡이로 남겨 둔다.
+function stormAt(){
+  if(Math.round(P.precipTest) === 3) return 1;
+  return STORMS.at(ship.x, ship.y);
+}
+// 지금 폭풍 속인가(세기>0). 폭우 표현·구름 걷기·어둠 고정·번개·소리가 이걸 본다.
 function inStorm(){
-  return Math.round(P.precipTest) === 3;
+  return stormAt() > 0;
 }
 
 // 지금의 어둠. 평소에는 해의 높이가 정하지만, 폭풍 속에서는 해를 묻지 않고
@@ -1913,14 +2061,18 @@ window.addEventListener('keydown',     () => SND.wake(), { once:true });
 // 머리 위 하늘이 얼마나 열려 있는가 (0 = 완전히 덮임, 1 = 맑음).
 // 별 관측과 시야가 같은 하늘을 봐야 하므로 한 군데로 모았다 — 구름에 별이
 // 가렸는데 시야는 멀쩡하면 이상하다.
-// 비나 눈이 내리는 동안은 0 이다. 내린다는 것은 구름이 머리 위를 덮고 있다는
-// 뜻이고, 그 하늘에 별빛이 뚫고 내려올 틈은 없다. "눈 오는 밤 별하늘" 은
-// 그림이 만든 인상이지 실제로는 없는 장면이다 — 별이 보이면 맑은 밤이고,
-// 맑은 밤에는 눈이 오지 않는다.
+// 비가 세차게 내리면 별이 사라진다. 다만 가랑비·성긴 비까지 별을 지우지는
+// 않는다 — 실제로 얇은 비구름 아래 별이 비치는 밤이 있고, 무엇보다 떠가는
+// 구름 자락이 스칠 때마다 약한 비가 잠깐 내려 별이 깜빡이면 눈에 거슬린다.
+// 그래서 비의 세기(rate)가 문턱을 넘을 때만 하늘을 닫는다. 이건 사실성보다
+// 게임의 읽힘을 위한 선택이다 — 흔한 비에는 별이 총총하고, 폭우(rate 1)에는
+// 반드시 사라진다. 문턱은 실측 강수 분포를 재어 잡았다(센 비 상단 ≈ 0.59).
+// 눈은 rate 가 낮아 대개 문턱 아래다 — 눈발 속 별하늘은 그 나름대로 봐 줄 만하다.
+const SKY_RAIN_HIDE = 0.55;   // 이 세기 이상의 비면 별이 사라진다
 function skyClearAt(wx, wy){
   const p = {type:0, rate:0};
   precipAt(wx, wy, p);
-  if(p.rate > 0) return 0;
+  if(p.rate >= SKY_RAIN_HIDE) return 0;
   return 1 - Math.min(1, cloudOpacityAt(wx, wy));
 }
 
@@ -1938,6 +2090,72 @@ function updateSight(){
   sightNow.km = Math.max(SIGHT_MIN, SHIP.spec.sight * f);
 }
 
+// ===== 날씨 아이콘 — 날짜 카드에 지금 하늘을 한 그림으로 =====
+// 배가 선 자리의 상태를 이미 아는 것들로만 가른다(새 판정을 만들지 않는다).
+//   눈/비/세기 → precipAt · 폭우 → inStorm · 구름 두께 → cloudOpacityAt · 밤낮 → darknessNow
+// 비는 세기(rate)로 약한 비/비/폭우 셋으로 나눈다. 경계는 실측 강수 분포를
+// 재어 잡은 첫 어림값이라 상수로 빼 둔다 — 항해하며 눈으로 보고 고친다.
+const WX_RAIN_LIGHT = 0.30;   // 이 미만이면 약한 비
+const WX_RAIN_HEAVY = 0.60;   // 이 이상이면 폭우(번개). 그 사이는 그냥 비
+const WX_CLOUDY     = 0.55;   // 비는 없어도 구름이 이만큼 두꺼우면 '흐림'
+const WX_NIGHT      = 0.65;   // 어둠이 이 이상이면 밤 아이콘(맑음일 때만 갈린다)
+
+// 지금 날씨를 한 낱말로. 'clear|moon|cloud|rainL|rain|storm|snow'
+function weatherNow(){
+  const p = { type:0, rate:0 };
+  precipAt(ship.x, ship.y, p);
+  if(inStorm()) return 'storm';
+  if(p.rate > 0){
+    if(p.type === PRECIP_SNOW) return 'snow';
+    if(p.rate >= WX_RAIN_HEAVY) return 'storm';   // 아주 센 비는 폭우 그림으로
+    if(p.rate <  WX_RAIN_LIGHT) return 'rainL';
+    return 'rain';
+  }
+  if(cloudOpacityAt(ship.x, ship.y) >= WX_CLOUDY) return 'cloud';
+  // 비도 두꺼운 구름도 없다 — 맑음. 밤이면 달로 가른다.
+  return darknessNow() >= WX_NIGHT ? 'moon' : 'clear';
+}
+
+// 날씨 낱말 → 20px SVG 조각. 카드 글자 옆에 innerHTML 로 얹는다.
+// 좌표는 중심 0,0 기준 viewBox -20~20. defs 는 아이콘마다 겹치지 않게 접두어를 둔다.
+const WX_ICON_CACHE = {};
+function weatherIcon(kind){
+  if(WX_ICON_CACHE[kind]) return WX_ICON_CACHE[kind];
+  const cloud = (fill, stroke) =>
+    '<path d="M-13,4 a7,7 0 0,1 2,-14 a6.5,6.5 0 0,1 9,-3.5 a8,8 0 0,1 13,4 a6.5,6.5 0 0,1 2,13 Z" fill="'+fill+'" stroke="'+stroke+'" stroke-width="0.6"/>';
+  let g = '';
+  if(kind === 'clear'){
+    g = '<circle cx="0" cy="0" r="8.5" fill="#f2c033"/>'
+      + '<g stroke="#f2c033" stroke-width="1.8" stroke-linecap="round">'
+      + '<line x1="0" y1="-15" x2="0" y2="-11.5"/><line x1="0" y1="11.5" x2="0" y2="15"/>'
+      + '<line x1="-15" y1="0" x2="-11.5" y2="0"/><line x1="11.5" y1="0" x2="15" y2="0"/>'
+      + '<line x1="-10.6" y1="-10.6" x2="-8.1" y2="-8.1"/><line x1="8.1" y1="8.1" x2="10.6" y2="10.6"/>'
+      + '<line x1="10.6" y1="-10.6" x2="8.1" y2="-8.1"/><line x1="-8.1" y1="8.1" x2="-10.6" y2="10.6"/></g>';
+  } else if(kind === 'moon'){
+    g = '<path d="M8,-9 a11,11 0 1,0 3,17 a9,9 0 1,1 -3,-17 Z" fill="#e9dfa6"/>';
+  } else if(kind === 'cloud'){
+    g = cloud('#c3cad0', '#98a2ab');
+  } else if(kind === 'rainL'){
+    g = cloud('#a9b2bb', '#818b95')
+      + '<g stroke="#a9cdec" stroke-width="1.7" stroke-linecap="round">'
+      + '<line x1="-4" y1="8" x2="-6" y2="14"/><line x1="5" y1="8" x2="3" y2="14"/></g>';
+  } else if(kind === 'rain'){
+    g = cloud('#9aa4ae', '#727d87')
+      + '<g stroke="#5fa0dd" stroke-width="2" stroke-linecap="round">'
+      + '<line x1="-8" y1="8" x2="-10" y2="15"/><line x1="0" y1="9" x2="-2" y2="16"/><line x1="8" y1="8" x2="6" y2="15"/></g>';
+  } else if(kind === 'storm'){
+    g = cloud('#606b76', '#414a52')
+      + '<g stroke="#3f86d6" stroke-width="2" stroke-linecap="round">'
+      + '<line x1="-10" y1="8" x2="-12" y2="15"/><line x1="10" y1="8" x2="8" y2="15"/></g>'
+      + '<path d="M2.5,5 L-5,16 L0,16 L-4,24 L7.5,11 L1.5,11 Z" fill="#ffd63a" stroke="#a9741a" stroke-width="0.5" stroke-linejoin="round"/>';
+  } else if(kind === 'snow'){
+    g = cloud('#c3cad0', '#98a2ab')
+      + '<g fill="#ffffff"><circle cx="-6" cy="11" r="1.7"/><circle cx="1" cy="13" r="1.7"/><circle cx="7" cy="10" r="1.7"/></g>';
+  }
+  const svg = '<svg viewBox="-20 -20 40 40" width="20" height="20" style="vertical-align:middle;display:inline-block">'+g+'</svg>';
+  WX_ICON_CACHE[kind] = svg;
+  return svg;
+}
 // ===== 별 — 밤하늘 =====
 // 화면 전체를 '올려다본 하늘' 로 읽는다. 가운데가 천정, 가장자리가 지평선이다.
 // 지도 배율과는 무관하다 — 지도를 확대한다고 별이 커지지는 않으니까.
@@ -2394,9 +2612,18 @@ const TUNE = (function(){
     const cal = calendar();
     const f = DATEFMT.find(x => x[0] === dateFmt) || DATEFMT[0];
     const c = { y:cal.y, m:cal.m, d:cal.d, w:dow(), k:dowK() };
+    const days = Math.floor(gameDay - voyageStartDay) + 1;
+    // 항해일차는 카드 가운데(기존 text-align:center). 날씨 아이콘은 글자 흐름에서
+    // 빼내 오른쪽 끝에 얹는다(absolute) — 그래야 일수 자릿수가 바뀌어도 글자는
+    // 늘 중앙에 남고 아이콘은 밀리거나 당겨지지 않는다. em 을 기준(relative)으로 삼는다.
     hd.innerHTML =
       '<b style="font-size:'+f[3]+'px">'+f[2](c)+'</b>'+
-      '<em>항해 <b>'+(Math.floor(gameDay - voyageStartDay)+1)+'</b>일차</em>';
+      '<em style="position:relative">'+
+        '항해 <b>'+days+'</b>일차'+
+        '<span style="position:absolute;right:0;top:50%;transform:translateY(-50%);line-height:0">'+
+          weatherIcon(weatherNow())+
+        '</span>'+
+      '</em>';
   }
   function refresh(){
     pull();
@@ -2497,6 +2724,7 @@ function loop(now){
   if(!paused){                  // 시간만 세운다. 아래 그리기는 그대로 돈다
     update(dt);
     CURVIZ.step(dt);
+    STORMS.step(dt);            // 폭풍 생성·이동·소멸 — 멈추면 함께 멈춘다
   }
   updateSight();   // 멈춰 있어도 시야는 잰다 — 패널이 열려 있으면 값이 보이므로
   SND.step();      // 소리도 같다 — 멈춰 있어도 비는 계속 내리고 있으니까

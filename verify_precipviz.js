@@ -110,6 +110,8 @@ vm.runInContext([
   'let THUNDERED = -1;',
   'const SND = { thunder(seed){ THUNDERED = seed; } };',
   grabFn('inStorm'), grabFn('lightningCurve'), grabFn('boltPath'), grabFn('lightningVeil'),
+  // 폭풍 세기: 자연 폭풍(STORMS)은 여기서 안 만드므로 시험 3 만 최대로 친다.
+  'function stormAt(){ return Math.round(P.precipTest) === 3 ? 1 : 0; }',
   'let precipT = 0;',
   grab(/const precipDrops = \(function\(\)\{[\s\S]*?\n\}\)\(\);/),
   grabFn('airTempC'), grabFn('precipAt'), grabFn('precipVeil'),

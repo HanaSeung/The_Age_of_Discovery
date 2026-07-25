@@ -31,7 +31,7 @@ chk('실측 기온으로 비와 눈을 가른다',
     /airTempC\(wx, wy\) < PRECIP_ST \? PRECIP_SNOW : PRECIP_RAIN/.test(src));
 chk('기온 자료가 없으면 위도 근사로 물러선다',
     /AIRTEMP \? AIRTEMP\.sample\(wx, wy, monthF\(\)\) : seaTempC\(wy\)/.test(src));
-chk('두 겹을 곱한다 (지역 x 현재)', /out\.rate = wet \* here/.test(src));
+chk('두 겹을 곱한다 (지역 x 현재)', /out\.rate = Math\.max\(out\.rate, wet \* here\)/.test(src));
 chk('구름이 없으면 비도 없다', /if\(here <= 0\) return out/.test(src));
 chk('결과 객체를 새로 만들지 않는다', !/return \{\s*type/.test(src));
 
@@ -83,6 +83,8 @@ vm.runInContext(fs.readFileSync(D + 'airtemp_data.js', 'utf8'), box);
 vm.runInContext([
   worldC, 'const DEG2PXY = WORLD_H/180;',
   wrapFn, seaC, seaFn, precipMod, airMod, precipC, airFn, precipFn,
+  // 폭풍 세기: 이 스크립트는 자연 폭풍을 만들지 않는다 — 늘 0(실측 강수만 본다).
+  'function stormAt(){ return 0; }',
   // 구름 층은 이 스크립트가 쥔다. HERE 를 바꿔가며 시험한다.
   'function cloudOpacityAt(wx, wy){ return HERE; }',
   'let MF = 0;',
