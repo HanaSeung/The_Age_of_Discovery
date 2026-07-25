@@ -50,6 +50,24 @@
   #compass .v2{font-size:26px;color:#e0705f;font-family:var(--numfont);line-height:1.05;}
   #compass .u2{font-size:12px;color:#a07068;}
   #compass canvas{flex:0 0 auto;display:block;width:172px;height:172px;}
+  /* ===== 미니맵 카드 — 좌상. 나침반 카드와 짝을 이룬다 =====
+     폭 290 = 여백12 + 지도266 + 여백12 + 테두리2 (조정 패널·나침반과 같은 폭)
+     높이 235 = 띠 33 + 여백12 + 지도178 + 여백12 + 테두리2 → 나침반(231)과 거의 같다
+     지도는 3:2. 화면과 같은 가로 우세라 눈이 옮겨 다니기 쉽다. */
+  #mini{position:fixed;left:16px;top:14px;width:290px;z-index:5;box-sizing:border-box;
+    background:rgba(18,28,26,.93);border:1px solid rgba(122,90,52,.55);border-radius:6px;
+    pointer-events:none;user-select:none;
+    font-family:'Segoe UI','Malgun Gothic',sans-serif;}
+  #mini.off{display:none;}             /* M 으로 여닫는다 */
+  #mini .head{padding:8px 12px;border-bottom:1px solid #3a5450;background:#121c1a;
+    border-radius:5px 5px 0 0;display:flex;align-items:baseline;justify-content:space-between;
+    font-size:12.5px;color:#e9ddc0;}
+  #mini .head s{color:#7f8f8b;font-size:10px;text-decoration:none;margin-right:4px;}
+  #mini .head b{color:#ffd98a;font-family:var(--numfont);font-weight:400;}
+  #mini .head i{color:#6f7d79;font-size:9.5px;font-style:normal;}
+  #mini .wrap{padding:12px;}
+  #mini canvas{display:block;width:266px;height:178px;
+    border:1px solid #3a5450;border-radius:2px;}
   #info{top:0;left:0;right:0;bottom:0;display:none;align-items:center;justify-content:center;
     background:rgba(12,20,19,.86);pointer-events:auto;z-index:5;}
   #info .card{max-width:560px;background:#efe2bf;color:#3a2c17;border:2px solid #7a5a34;
@@ -220,6 +238,11 @@
     </div>
     <canvas id="cCanvas"></canvas>
   </div>
+</div>
+<div id="mini">
+  <div class="head"><span><s>축척</s><b id="mScale">—</b></span>
+                    <i><kbd>M</kbd> 여닫기 · <kbd>⇧M</kbd> 축척</i></div>
+  <div class="wrap"><canvas id="mCanvas"></canvas></div>
 </div>
 <div id="tune"></div>
 
@@ -990,7 +1013,9 @@ addEventListener('keydown',e=>{
   if(k==='c') show.coll=!show.coll;
   if(k==='k') show.cur=!show.cur;
   if(k==='b') show.wind=!show.wind;
-  if('ghckb'.includes(k)) updateHint();      // 토글 색상 갱신
+  // 미니맵 — M 여닫기, Shift+M 축척 단 넘기기 (여는 김에 넘기지는 않는다)
+  if(k==='m'){ if(e.shiftKey) MINI.cycle(); else MINI.toggle(); }
+  if('ghckbm'.includes(k)) updateHint();     // 토글 색상 갱신
   if(k==='i'){ const p=document.getElementById('info'); p.style.display = p.style.display==='flex'?'none':'flex'; }
   if(k==='l'){ zoomLock=!zoomLock; if(zoomLock) targetZoom=zoom; }   // [테스트] 배율 고정
   if(k==='p'){ const t=document.getElementById('tune');               // [테스트] 조정 패널
@@ -1012,11 +1037,11 @@ cv.addEventListener('wheel',e=>{
   const step = e.altKey ? 1.02 : 1.12;        // Alt+휠 = 미세 조정 (최적값 탐색용)
   targetZoom = Math.max(ZMIN,Math.min(ZMAX, targetZoom * (e.deltaY<0?step:1/step)));
 },{passive:false});
-const show = {grat:true, rhumb:true, coll:false, cur:true, wind:true};
+const show = {grat:true, rhumb:true, coll:false, cur:true, wind:true, mini:true};
 
 // ===== 토글 안내 — 켜짐/꺼짐을 글자색으로 표시 =====
-const TOGGLES = [['b','바람','wind'], ['k','해류','cur'], ['g','경위선','grat'],
-                 ['h','나침선','rhumb'], ['c','충돌영역','coll']];
+const TOGGLES = [['m','미니맵','mini'], ['b','바람','wind'], ['k','해류','cur'],
+                 ['g','경위선','grat'], ['h','나침선','rhumb'], ['c','충돌영역','coll']];
 function updateHint(){
   document.getElementById('toggles').innerHTML =
     ' · <span class="'+(paused?'on':'off')+'"><kbd>Space</kbd> 정지</span> · ' +
@@ -1462,6 +1487,177 @@ function compass(){
   const gTxt = '<s>위도</s><b>'+geo(lat,'N','S')+'</b> &nbsp; <s>경도</s><b>'+geo(lon,'E','W')+'</b>';
   if(gTxt !== cGeoTxt){ cGeoTxt = gTxt; document.getElementById('cGeo').innerHTML = gTxt; }
 }
+
+// ===== 미니맵 — 좌상 카드. 배 둘레의 국지 해도 =====
+// 업계 관례를 그대로 따랐다.
+//   · 코너 미니맵은 '국지'다. 세계 전도는 성격이 다른 물건이라 나중에 별도 화면으로 둔다
+//   · 북 고정. 해도의 규칙이다 (진행방향 고정은 FPS·레이싱 쪽 관례)
+//   · 축척은 몇 단으로 끊는다. 이 게임은 화면이 담는 범위가 94km~40,000km 로 400배나
+//     벌어져 고정 축척 하나로는 양끝을 다 담지 못한다. 미끄러지듯 따라가면 멀미가 난다
+//   · 정적 지형은 프레임마다 다시 그리지 않는다 — 한 번 굽고 잘라 붙인다
+// 굽기: 보이는 것보다 MINI_OVER 배 넓은 조각을 미리 그려 두고, 배가 그 여유의
+// 절반을 벗어날 때만 다시 굽는다. 프레임마다 하는 일은 drawImage 하나다.
+const MINI = (function(){
+  const MW = 266, MH = 178;                 // 지도 크기 (CSS px — CSS 의 #mini canvas 와 짝)
+  const SPAN_KM = [500, 2000, 8000];        // ★ 축척 단 — 지도 가로가 담는 거리(km)
+  const GRAT_DEG = [5, 10, 30];             // ★ 단마다 경위선 간격(도)
+  const OVER = 2.0;                         // ★ 굽는 조각은 보이는 것의 몇 배인가
+  const REBAKE = 0.75;                      // ★ 여유의 몇 할을 쓰면 다시 굽는가
+  const VIEW_MIN = 6;                       // ★ 화면 테두리 최소 크기(px) — 배율 100 에서 점이 된다
+  // 이름 주의: 검증 스크립트 몇은 원본을 글로 훑어 `const SEA_*` `PRECIP_*` `RAIN_*`
+  // `SNOW_*` `LTN_*` `STORM_*` 를 통째로 긁어 자기 샌드박스에 넣는다. 모듈 안에
+  // 숨어 있어도 글로는 보이므로, 그 무리와 같은 꼴로 지으면 남의 검증이 깨진다.
+  // (실제로 SEA_C 로 지었다가 verify_precip·verify_seatemp 를 깨뜨렸다.)
+  const MINI_SEA = DEPTH_COL[2];            //   미니맵 바다 — 수심은 그리지 않는다 (관례: 단순화)
+  const LS_ON = 'aod_mini', LS_STEP = 'aod_mini_step';
+  const BAR_NICE = [10,20,50,100,200,500,1000,2000];   // 축척 막대가 고르는 반듯한 값
+
+  function byId(id){ try{ return document.getElementById(id); }catch(e){ return null; } }
+  function dpr(){ try{ return Math.min(window.devicePixelRatio||1, 2); }catch(e){ return 1; } }
+
+  const cvM  = byId('mCanvas');
+  const ctxM = (cvM && cvM.getContext) ? cvM.getContext('2d') : null;
+  let bake = null, bctx = null;
+  try{ bake = document.createElement('canvas'); bctx = bake.getContext('2d'); }catch(e){}
+
+  let step = 1, on = true, headTxt = '';
+  let bx=0, by=0, bw=0, bh=0, bstep=-1, bdpr=0;   // 구운 조각이 담은 월드 사각형
+
+  // 지도가 담는 월드 사각형. 그리기와 검증이 같은 것을 본다
+  function spanPx(){ return SPAN_KM[step] / KM_PER_PX; }
+  function viewRect(){
+    const w = spanPx(), h = w*(MH/MW);
+    return { x: shipXin()-w/2, y: ship.y-h/2, w, h };
+  }
+  function bakeRect(){ return { x:bx, y:by, w:bw, h:bh }; }
+  // 배의 x 는 wrapX 로 [0,WORLD_W) 안에 갇혀 있고 구운 조각은 절대좌표다. 이음매를
+  // 넘는 순간 둘이 월드 폭만큼 어긋나므로, 조각 쪽으로 옮겨 온 값을 쓴다.
+  function shipXin(){
+    if(bw === 0) return ship.x;
+    return ship.x + Math.round((bx + bw/2 - ship.x)/WORLD_W)*WORLD_W;
+  }
+
+  function need(){
+    if(bstep !== step || bdpr !== dpr() || bw === 0) return true;
+    const w = spanPx(), h = w*(MH/MW);
+    if(Math.abs(bw - w*OVER) > 1e-6) return true;
+    return Math.abs(shipXin() - (bx+bw/2)) > (bw-w)/2*REBAKE ||
+           Math.abs(ship.y   - (by+bh/2)) > (bh-h)/2*REBAKE;
+  }
+
+  function doBake(){
+    const d = dpr(), w = spanPx(), h = w*(MH/MW);
+    bw = w*OVER; bh = h*OVER;
+    bx = ship.x - bw/2; by = ship.y - bh/2;
+    bstep = step; bdpr = d;
+    if(!bctx) return;                       // 검증(Node)에는 캔버스가 없다 — 사각형만 잡고 나간다
+    const pw = Math.round(MW*OVER*d), ph = Math.round(MH*OVER*d);
+    if(bake.width !== pw)  bake.width  = pw;
+    if(bake.height !== ph) bake.height = ph;
+    const k = pw/bw;                        // 월드px → 조각px
+    bctx.setTransform(1,0,0,1,0,0);
+    bctx.fillStyle = VOID; bctx.fillRect(0,0,pw,ph);          // 해도 밖 (극 너머)
+    const yT = Math.max(0, by), yB = Math.min(WORLD_H, by+bh);
+    if(yB > yT){ bctx.fillStyle = MINI_SEA;
+                 bctx.fillRect(0, (yT-by)*k, pw, (yB-yT)*k); }
+    // 경도 순환 — 조각이 이음매를 걸치면 필요한 벌을 모두 겹쳐 그린다
+    const c0 = Math.floor(bx/WORLD_W), c1 = Math.floor((bx+bw)/WORLD_W);
+    for(let c=c0;c<=c1;c++){
+      bctx.setTransform(k,0,0,k, (c*WORLD_W-bx)*k, -by*k);
+      const dg = GRAT_DEG[step];
+      bctx.strokeStyle='rgba(74,54,32,.22)'; bctx.lineWidth=1/k; bctx.beginPath();
+      for(let lon=-180; lon<=180; lon+=dg){ const x=(lon+180)*DEG2PXX; bctx.moveTo(x,0); bctx.lineTo(x,WORLD_H); }
+      for(let lat=-90;  lat<=90;  lat+=dg){ const y=(90-lat)*DEG2PXY; bctx.moveTo(0,y); bctx.lineTo(WORLD_W,y); }
+      bctx.stroke();
+      bctx.lineJoin='round';
+      bctx.fillStyle = LAND_C; bctx.fill(landPath,'evenodd');
+      bctx.strokeStyle = COAST; bctx.lineWidth = 1.2/k; bctx.stroke(landPath);
+    }
+    bctx.setTransform(1,0,0,1,0,0);
+  }
+
+  // 축척 막대 — 지도 폭의 1/4 에 가장 가까운 반듯한 값
+  function barKm(){
+    const want = SPAN_KM[step]/4;
+    let best = BAR_NICE[0];
+    for(const v of BAR_NICE) if(Math.abs(v-want) < Math.abs(best-want)) best = v;
+    return best;
+  }
+
+  function draw(){
+    if(!on || !ctxM) return;
+    if(need()) doBake();
+    const d = bdpr, g = ctxM;
+    const pw = Math.round(MW*d), ph = Math.round(MH*d);
+    if(cvM.width !== pw)  cvM.width  = pw;
+    if(cvM.height !== ph) cvM.height = ph;
+    const v = viewRect(), k = pw/v.w;        // 월드px → 지도px
+    g.setTransform(1,0,0,1,0,0);
+    // 구운 조각에서 지금 보이는 만큼을 오려 붙인다
+    const bk = Math.round(MW*OVER*d)/bw;
+    g.drawImage(bake, (v.x-bx)*bk, (v.y-by)*bk, v.w*bk, v.h*bk, 0, 0, pw, ph);
+    // 본 화면이 담는 범위 — 배율 100 에서는 점이 되므로 최소 크기를 준다.
+    // 거꾸로 배율이 낮으면 본 화면이 미니맵보다 넓어 테두리가 지도를 통째로 삼킨다.
+    // 그때는 알려 줄 것이 없으므로 그리지 않는다 (viewFits 가 판정).
+    const rw = Math.max(VIEW_MIN*d, (W/zoom)*k), rh = Math.max(VIEW_MIN*d, (H/zoom)*k);
+    if(rw < pw && rh < ph){
+      g.strokeStyle='rgba(20,30,28,.55)'; g.lineWidth=3*d;
+      g.strokeRect((pw-rw)/2, (ph-rh)/2, rw, rh);
+      g.strokeStyle='rgba(255,233,184,.85)'; g.lineWidth=1.2*d;
+      g.strokeRect((pw-rw)/2, (ph-rh)/2, rw, rh);
+    }
+    // 배 — 북 고정이라 침로를 그대로 돌린다. 늘 한가운데다
+    const s = 5.5*d;
+    g.save(); g.translate(pw/2, ph/2); g.rotate(ship.head);
+    g.fillStyle = ship.grounded ? '#e0705f' : '#ffd98a';
+    g.strokeStyle='#2a1e0e'; g.lineWidth=1.1*d;
+    g.beginPath(); g.moveTo(s*1.7,0); g.lineTo(-s,s*0.9); g.lineTo(-s*0.4,0); g.lineTo(-s,-s*0.9);
+    g.closePath(); g.fill(); g.stroke(); g.restore();
+    // 북 표식 — 북 고정임을 한눈에 알리는 자리
+    g.font = (9.5*d)+'px Georgia'; g.textAlign='right'; g.textBaseline='top';
+    g.strokeStyle='rgba(20,30,28,.9)'; g.lineWidth=3*d; g.strokeText('N', pw-4*d, 3*d);
+    g.fillStyle='#f2e6bf'; g.fillText('N', pw-4*d, 3*d);
+    // 축척 막대
+    const km = barKm(), bpx = (km/KM_PER_PX)*k, x0 = 8*d, y0 = ph-10*d;
+    g.strokeStyle='rgba(20,30,28,.85)'; g.lineWidth=3.4*d;
+    g.beginPath(); g.moveTo(x0,y0); g.lineTo(x0+bpx,y0); g.stroke();
+    g.strokeStyle='#ffe9b8'; g.lineWidth=1.4*d;
+    g.beginPath(); g.moveTo(x0,y0-3*d); g.lineTo(x0,y0+3*d);
+    g.moveTo(x0,y0); g.lineTo(x0+bpx,y0);
+    g.moveTo(x0+bpx,y0-3*d); g.lineTo(x0+bpx,y0+3*d); g.stroke();
+    g.font=(9.5*d)+'px Georgia'; g.textAlign='left'; g.textBaseline='bottom';
+    g.strokeStyle='rgba(20,30,28,.9)'; g.lineWidth=3*d; g.strokeText(km+' km', x0, y0-4*d);
+    g.fillStyle='#ffe9b8'; g.fillText(km+' km', x0, y0-4*d);
+    // 맨 위 띠 — 값이 바뀔 때만 DOM 을 건드린다
+    const t = SPAN_KM[step] + ' km';
+    if(t !== headTxt){ headTxt = t; const hd = byId('mScale'); if(hd) hd.textContent = t; }
+  }
+
+  function apply(){
+    const card = byId('mini');
+    if(card) card.classList.toggle('off', !on);
+    show.mini = on;
+    try{ localStorage.setItem(LS_ON, on?'1':'0'); }catch(e){}
+  }
+  function toggle(){ on = !on; apply(); }
+  function cycle(){
+    step = (step+1) % SPAN_KM.length;
+    try{ localStorage.setItem(LS_STEP, String(step)); }catch(e){}
+    if(!on){ on = true; apply(); }          // 닫혀 있는데 축척만 바꾸면 아무 일도 없어 보인다
+  }
+  function setStep(s){ step = ((s % SPAN_KM.length) + SPAN_KM.length) % SPAN_KM.length; }
+
+  // 저장값 복원 — 없으면 켠 채로 시작한다
+  try{ on = localStorage.getItem(LS_ON) !== '0'; }catch(e){}
+  try{ const s = parseInt(localStorage.getItem(LS_STEP), 10);
+       if(s >= 0 && s < SPAN_KM.length) step = s; }catch(e){}
+  apply();
+  if(typeof updateHint === 'function') updateHint();
+
+  return { draw, toggle, cycle, setStep, need, doBake, viewRect, bakeRect, spanPx, barKm,
+           get on(){ return on; }, get step(){ return step; },
+           SPAN_KM, GRAT_DEG, OVER, REBAKE, VIEW_MIN, MW, MH };
+})();
 
 // ===== 바람 화살표 (화면 격자에 성기게) — B 로 토글 =====
 // 세기는 '굵기' 하나로만 나타낸다. 길이를 함께 변화시키면 두 신호가 서로를 흐리므로
@@ -3089,6 +3285,7 @@ function loop(now){
   lightningVeil();      // 번개는 밤 다음 — 어둠을 뚫고 화면이 밝아져야 한다
   starVeil();           // 별은 밤 다음이다. 밤에 함께 어두워지면 안 되니까
   compass();
+  MINI.draw();          // 전용 캔버스라 본 화면의 덮개(밤·비)에 물들지 않는다
   frameVignette();
   // [테스트] 패널이 열려 있으면 휠 확대 등 외부 변경을 반영 (0.15초 간격)
   tuneT += dt;
