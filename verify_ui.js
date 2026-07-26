@@ -1,4 +1,4 @@
-// verify_ui.js — 나침반 회피 및 토글 색상 표시 검증
+// verify_ui.js — 토글 색상 표시와 판 겹침 검증
 "use strict";
 const fs = require('fs'), path = require('path');
 const src = fs.readFileSync(path.join(__dirname, 'world_chart.html'), 'utf8');
@@ -6,16 +6,11 @@ let pass = 0, fail = 0;
 const chk = (n, c, note) => { c ? (pass++, console.log('  OK   ' + n + (note ? '  ' + note : '')))
                                 : (fail++, console.log('  FAIL ' + n + (note ? '  ' + note : ''))); };
 
-console.log('\n=== 1. 나침반이 패널에 가리지 않는지 ===');
-chk('패널 열림 판정 함수', /function tuneOpen\(\)/.test(src));
-chk('패널 폭 상수', /const TUNE_W = 290/.test(src));
-chk('위치 계산이 한 곳에 모임', /function compassPos\(\)/.test(src));
-chk('열리면 왼쪽으로 비켜남', /cx: W - 58 - \(open \? TUNE_W : 0\)/.test(src));
-chk('열리면 위로도 올라감', /cy: H - \(open \? 150 : 80\)/.test(src));
-chk('compass 가 compassPos 사용', /const \{cx, cy, R\} = compassPos\(\)/.test(src));
-// CSS 의 실제 패널 폭과 상수가 일치하는지 (어긋나면 나침반이 반쯤 가려진다)
-const cssW = src.match(/#tune\{[^}]*width:(\d+)px/);
-chk('CSS 폭과 상수 일치', cssW && +cssW[1] === 290, cssW ? `CSS ${cssW[1]}px` : 'CSS 폭 못 찾음');
+// 옛 1절('나침반이 패널에 가리지 않는지')은 걷어냈다. 나침반이 원형 계기로
+// 흡수되면서 화면 구석을 떠도는 일이 없어졌고, 계기는 position:fixed 로 제자리에
+// 붙박여 패널이 열려도 비켜나지 않는다. 그래서 TUNE_W·tuneOpen()·compassPos() 가
+// 모두 사라졌고, 그것들을 찾던 검사도 함께 지운다.
+// 패널과 계기의 폭이 짝인지는 verify_compass.js 2절이 본다.
 
 console.log('\n=== 2. 토글 색상 표시 ===');
 chk('toggles 요소 존재', /<span id="toggles"><\/span>/.test(src));
@@ -30,7 +25,9 @@ chk('kbd 색도 함께 바뀜', /#hint \.on kbd\{/.test(src) && /#hint \.off kbd
 console.log('\n=== 2-1. 배경 위에서 읽히는지 (대비 확보) ===');
 chk('안내줄 배경판', /#hint\{[^}]*background:rgba\(14,24,22,\.78\)/.test(src));
 chk('안내줄 불투명(opacity 제거)', !/#hint\{[^}]*opacity/.test(src));
-chk('HUD 배경판', /#hud\{[^}]*background:rgba\(14,24,22,\.62\)/.test(src));
+// 옛 #hud 판은 걷어냈다 — verify_boot.js 가 '없어야 한다'로 지키고 있어,
+// 여기서 '있어야 한다'로 찾으면 두 검증이 정반대를 요구하게 된다
+chk('옛 HUD 판의 잔재가 없다', !/id="hud"/.test(src) && !/#hud\{/.test(src));
 chk('정적 안내 밝기 상향', /#hint \.dim\{color:#a99e86;\}/.test(src));
 chk('꺼짐도 읽히는 회색', /#hint \.off\{color:#7d8884;\}/.test(src));
 
@@ -43,55 +40,36 @@ for (const [k, label, f] of [['b','바람','wind'], ['k','해류','cur'], ['g','
 }
 
 console.log('\n=== 4. 구조/문법 ===');
-const opens = (src.match(/<div/g) || []).length, closes = (src.match(/<\/div>/g) || []).length;
-chk('div 여닫이 균형', opens === closes, `<div> ${opens} / </div> ${closes}`);
+// 세는 범위를 HTML 본문(첫 <script> 앞)으로 좁힌다. 스크립트 안에서는 조정 패널을
+// 문자열로 짜는데, 구역을 한 곳에서 열고 세 곳(구역 경계 둘 + 끝 하나)에서 닫으므로
+// 글자를 세는 방식으로는 짝이 맞을 수 없다 — 실행될 때 비로소 맞는다.
+const markup = src.split('<script>')[0];
+const opens = (markup.match(/<div/g) || []).length, closes = (markup.match(/<\/div>/g) || []).length;
+chk('본문 div 여닫이 균형', opens === closes, `<div> ${opens} / </div> ${closes}`);
 chk('안내줄에 정적 부분 유지', /class="dim"/.test(src));
 try { new Function(src.split('<script>').pop().split('</script>')[0]); chk('script 파싱', true); }
 catch (e) { chk('script 파싱', false, e.message); }
 
-console.log('\n=== 5. 화면 요소 겹침 (좌표 계산) ===');
-// CSS/JS 에서 실제 값을 뽑아 사각형으로 만들고 나침반 원과 겹치는지 본다.
-function css(sel, prop) {
-  const m = src.match(new RegExp(sel.replace(/[#.]/g, '\\$&') + '\\{[^}]*' + prop + ':\\s*([\\d.]+)(px|vw)'));
-  return m ? { v: +m[1], unit: m[2] } : null;
-}
-const TUNE_W = +src.match(/const TUNE_W = (\d+)/)[1];
-const CY = src.match(/cy: H - \(open \? (\d+) : (\d+)\)/);
-const CY_OPEN = +CY[1], CY_SHUT = +CY[2];
-const CX_OFF = +src.match(/cx: W - (\d+) - \(open/)[1];
-const R_OUT = 42;                                   // 원 반지름 34 + 테두리 8
-
-function boxes(W, H, open) {
-  const hintMax = src.match(/#hint\{[^}]*max-width:(\d+)vw/);
-  const hintW = Math.min(W - 32, (hintMax ? +hintMax[1] : 74) / 100 * W);
-  return {
-    // 안내줄은 좁은 화면에서 두 줄로 접힐 수 있으므로 넉넉히 70px 로 본다
-    '안내줄': { x: 16, y: H - 12 - 70, w: hintW, h: 70 },
-    '출처':   { x: W - 16 - 340 - (open ? 290 : 0), y: 16, w: 340, h: 34 },
-    '조정패널': open ? { x: W - TUNE_W, y: 0, w: TUNE_W, h: H } : null,
-  };
-}
-function hits(cx, cy, r, b) {
-  if (!b) return false;
-  const nx = Math.max(b.x, Math.min(cx, b.x + b.w));
-  const ny = Math.max(b.y, Math.min(cy, b.y + b.h));
-  return (nx - cx) ** 2 + (ny - cy) ** 2 < r * r;
-}
-let clash = [];
-for (const [W, H] of [[1920, 1080], [1600, 900], [1366, 768], [1280, 720]]) {
-  for (const open of [false, true]) {
-    const cx = W - CX_OFF - (open ? TUNE_W : 0), cy = H - (open ? CY_OPEN : CY_SHUT);
-    const bs = boxes(W, H, open);
-    const bad = Object.entries(bs).filter(([, b]) => hits(cx, cy, R_OUT, b)).map(([n]) => n);
-    const tag = `${W}x${H} 패널${open ? '열림' : '닫힘'}`;
-    if (bad.length) clash.push(tag + ' ← ' + bad.join(','));
-    console.log(`  ${tag.padEnd(20)} 나침반 중심 (${cx},${cy})  ${bad.length ? '겹침: ' + bad.join(', ') : '겹침 없음'}`);
-  }
-}
-chk('모든 해상도에서 나침반이 안 가림', clash.length === 0, clash.join(' / ') || '8가지 조합 통과');
-chk('출처가 우상단으로 이동', /#src\{top:16px;right:16px/.test(src));
-chk('패널 열리면 출처도 비켜남', /body\.tune-open #src\{right:306px;\}/.test(src));
-chk('패널 토글이 body 클래스 갱신', /classList\.toggle\('tune-open', open\)/.test(src));
+console.log('\n=== 5. 판과 계기가 어긋나지 않는가 ===');
+// 옛 검사는 화면을 떠도는 나침반이 판에 가리는지를 여덟 해상도에서 셈했다.
+// 계기가 position:fixed 로 붙박이가 된 뒤로는 가릴 일도 비켜날 일도 없어,
+// 이제 볼 것은 오른쪽에 세로로 늘어선 셋(조정 패널·출처·계기)의 폭과 여백뿐이다.
+const cssNum = (sel, prop) => {
+  const m = src.match(new RegExp(sel.replace(/[#.]/g, '\\$&') + '\\{[^}]*' + prop + ':(\\d+)px'));
+  return m ? +m[1] : NaN;
+};
+const tuneW = cssNum('#tune', 'width'), dialW = cssNum('#dial', 'width');
+const tuneR = cssNum('#tune', 'right'), dialR = cssNum('#dial', 'right');
+chk('패널·계기 폭을 찾았다', Number.isFinite(tuneW) && Number.isFinite(dialW),
+    `패널 ${tuneW}px / 계기 ${dialW}px`);
+chk('패널 폭이 계기 지름과 같다', tuneW === dialW, `${tuneW} = ${dialW}`);
+chk('오른쪽 기준이 같다 — 왼쪽 변도 따라 맞는다', tuneR === dialR,
+    `right ${tuneR}px = ${dialR}px`);
+chk('패널이 계기를 덮지 않는다 — 높이를 계기만큼 비워 둔다',
+    new RegExp('max-height:calc\\(100vh - ' + (14 + dialW + 16 + 14) + 'px\\)').test(src),
+    `100vh − ${14 + dialW + 16 + 14}px`);
+// 옛 '출처(#src)' 판과 body.tune-open 도 함께 사라졌다 — 찾던 검사를 지운다
+chk('옛 출처 판의 잔재가 없다', !/#src\{/.test(src) && !/tune-open/.test(src));
 
 console.log('\n=== 6. 바람 화살표 — 세기를 굵기로 ===');
 chk('길이 고정 상수', /const WARR_LEN = 26/.test(src));

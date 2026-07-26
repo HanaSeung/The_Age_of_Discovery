@@ -51,7 +51,8 @@ function mkEl(id){
   };
   els[id] = e; return e;
 }
-for(const id of ['c','cCanvas','hud','hint','toggles','tune','info','cWind','cCur'])
+for(const id of ['c','cCanvas','hud','hint','toggles','tune','info','cWind','cCur',
+                 'dCanvas','dial','dIn','dOut'])
   mkEl(id);
 const document_ = {
   getElementById(id){ return els[id] || mkEl(id); },
@@ -129,9 +130,11 @@ if(!err){
   const onMap  = drawn.filter(s => s.startsWith('c:')).length;
   chk('계기 캔버스에 그린다', onCard > 10, onCard + '회');
   chk('지도 캔버스를 건드리지 않는다', onMap === 0, onMap + '회');
-  chk('모서리 숫자를 DOM 에 넣는다',
-      els.dWind.textContent !== '' && els.dCur.textContent !== '' && els.dGs.textContent !== '',
-      `바람 "${els.dWind.textContent}" / 해류 "${els.dCur.textContent}" / 대지속력 "${els.dGs.textContent}"`);
+  // 표시값 넷은 모두 원 안이다 — DOM 이 아니라 캔버스에 실린다.
+  // 여기서는 계기가 모서리 DOM 을 찾지 않는지만 본다 (모양은 verify_compass 가 맡는다).
+  const ro = ['dGeo','dWind','dCur','dGs'].filter(k => els[k] !== undefined);
+  chk('모서리 DOM 을 찾지 않는다 — 값이 모두 원 안이다', ro.length === 0,
+      ro.length ? '아직 찾는다: ' + ro.join(', ') : '');
   chk('캔버스 크기가 잡혔다', els.dCanvas.width > 0, els.dCanvas.width + 'px');
 
   console.log('\n=== 5. 조정 패널이 만들어지는가 ===');

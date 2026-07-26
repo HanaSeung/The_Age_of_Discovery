@@ -116,7 +116,8 @@ chk('숫자 글꼴을 변수 하나로 둔다', /:root\{ --numfont: [^}]+\}/.tes
 chk('CSS 에 Georgia 를 직접 적은 곳이 없다',
     !/font-family:Georgia,serif/.test(src.split('</style>')[0]));
 const numSpots = (src.split('</style>')[0].match(/var\(--numfont\)/g) || []).length;
-chk('숫자 자리가 모두 변수를 쓴다', numSpots >= 5, `${numSpots}곳`);
+// 계기의 모서리 판을 걷어내면서 한 자리가 줄었다 (값이 캔버스로 옮겨 갔다)
+chk('숫자 자리가 모두 변수를 쓴다', numSpots >= 4, `${numSpots}곳`);
 chk('날짜 줄을 통째로 <b> 로 감쌌다', /'<b style="font-size:'[\s\S]{0,80}\+f\[2\]\(c\)\+'<\/b>'/.test(src));
 chk('띠 숫자에 글꼴을 건다', /#tune \.head b\{font-family:var\(--numfont\)/.test(src));
 chk('monospace 숫자가 남아 있지 않다',

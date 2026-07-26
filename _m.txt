@@ -1,6 +1,0 @@
-﻿1269: if(k==='m'){ if(e.shiftKey) MINI.cycle(); else MINI.toggle(); }
-1780: // 굽기: 보이는 것보다 MINI_OVER 배 넓은 조각을 미리 그려 두고, 배가 그 여유의
-1782: const MINI = (function(){
-1793: const MINI_SEA = DEPTH_COL[2];            //   미니맵 바다 — 수심은 그리지 않는다 (관례: 단순화)
-1857: if(yB > yT){ bctx.fillStyle = MINI_SEA;
-3590: MINI.draw();          // 전용 캔버스라 본 화면의 덮개(밤·비)에 물들지 않는다

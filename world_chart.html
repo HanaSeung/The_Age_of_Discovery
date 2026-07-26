@@ -35,23 +35,14 @@
   #hint .fps:not(:empty)::before{content:' · ';color:#a99e86;}
   #hint.hidden{display:none;}          /* 설정 탭의 체크상자로 통째로 끈다 */
   /* ===== 원형 계기 — 우하. 미니맵(해도)과 나침반을 한 원에 합친 것 =====
-     사각 카드가 없다. 캔버스가 원을 통째로 그리고, HTML 은 모서리 글자와
-     버튼만 얹는다. 전체는 마우스를 통과시키고(pointer-events:none) 버튼만
+     사각 카드가 없다. 캔버스가 원을 통째로 그리고, HTML 은 버튼만 얹는다.
+     전체는 마우스를 통과시키고(pointer-events:none) 버튼만
      받는다 — 커서가 원 안인지는 JS 가 좌표로 직접 잰다. */
   #dial{position:fixed;right:16px;bottom:16px;width:320px;height:320px;z-index:5;
     pointer-events:none;user-select:none;}
   #dial canvas{display:block;width:320px;height:320px;}
-  /* 모서리 글자 — 판(어두운 반투명) 위에 이름표·값. 원에 3.7px 여유로 안 닿는다 */
-  #dial .ro{position:absolute;width:58px;height:32px;box-sizing:border-box;
-    padding:2px 5px;border-radius:5px;background:rgba(18,28,26,.72);
-    font-family:'Segoe UI','Malgun Gothic',sans-serif;line-height:1.15;}
-  #dial .ro s{display:block;font-size:9px;color:#9db3ac;text-decoration:none;}
-  #dial .ro b{display:block;font-size:12.5px;font-weight:400;font-family:var(--numfont);
-    color:#ffd98a;}                    /* 기본은 금색(위도·경도) — 나머지 셋은 제 색을 덧입힌다 */
-  #dial .ro.tl{left:0;top:0;text-align:left;}
-  #dial .ro.tr{right:0;top:0;text-align:right;}
-  #dial .ro.bl{left:0;bottom:0;text-align:left;}
-  #dial .ro.br{right:0;bottom:0;text-align:right;}
+  /* 모서리 판은 걷어냈다 — 네 값(위경도·바람·해류·대지속력)이 모두 원 안으로
+     들어와 캔버스에 직접 그려진다. 원 밖에 남는 것은 버튼 둘뿐이다. */
   /* 확대·축소 버튼 — 링 좌우. 평시 투명, 커서가 원 안이면 .near 로 나타난다 */
   #dial button{position:absolute;width:26px;height:26px;padding:0;border-radius:50%;
     pointer-events:auto;cursor:pointer;opacity:0;transition:opacity .13s;
@@ -81,7 +72,10 @@
      메뉴까지 스크롤 상자에 넣으면 스크롤바가 생길 때 메뉴가 그 폭만큼 왼쪽으로 밀린다.
      여닫기는 display 가 아니라 transform 으로 한다 (display 는 전환이 안 걸린다).
      닫힘일 때는 화면 밖으로 밀어 두고 visibility 로 손이 닿지 않게 한다. */
-  #tune{position:fixed;top:14px;right:16px;width:290px;z-index:6;
+  #tune{position:fixed;top:14px;right:16px;width:320px;z-index:6;
+    /* 폭 320 은 우하 원형 계기의 지름과 짝이다 — 오른쪽 기준(right:16px)이 같으므로
+       왼쪽 변도 저절로 맞아 둘이 한 기둥처럼 선다. CSS 는 JS 의 SIZE 를 읽지 못하니
+       계기 크기를 바꾸면 이 값도 함께 고쳐야 한다 (verify_ui.js 5절이 지킨다). */
     max-height:calc(100vh - 364px);display:flex;flex-direction:column;
     /* 364 = 위 14 + 우하 원형 계기 320 + 아래 16 + 여유 14 — 패널이 계기를 덮지 않는다 */
     background:rgba(18,28,26,.93);border:1px solid rgba(122,90,52,.55);border-radius:6px;
@@ -229,10 +223,6 @@
 </div>
 <div id="dial">
   <canvas id="dCanvas"></canvas>
-  <div class="ro tl" id="dGeo"><b>—</b><b>—</b></div>
-  <div class="ro tr"><s>바람</s><b id="dWind" style="color:#8fd3e8">—</b></div>
-  <div class="ro bl"><s>해류</s><b id="dCur" style="color:#e0705f">—</b></div>
-  <div class="ro br"><s>대지속력</s><b id="dGs" style="color:#ffe9b8">—</b></div>
   <button class="zo" id="dOut" title="축소 — 넓게 보기">&minus;</button>
   <button class="zi" id="dIn" title="확대 — 좁게 보기">+</button>
 </div>
@@ -1654,9 +1644,13 @@ function geo(v, pos, neg){ return Math.abs(v).toFixed(1)+'°'+(v>=0?pos:neg); }
 // ===== 원형 계기 — 우하. 해도(미니맵)와 나침반을 한 원에 합친 것 =====
 // 미니맵의 굽기·오려붙이기와 나침반의 바늘·방위를 한 캔버스에 겹친다.
 //   · 바깥 띠(30px): 방위 글자 N·S·E·W 만. 비워 둔다
-//   · 금색 원(반지름 DIAL_RC): 해도의 테두리이자 침로 점이 도는 길
-//   · 바람·해류 막대: 금색 원을 가로질러 걸친다 — 반은 해도, 반은 띠
+//   · 금색 원(반지름 DIAL_RC): 해도의 테두리이자 침로·바람·해류 점이 도는 길
+//   · 세 점: 크기·테두리가 같고 색으로만 갈린다 (침로 붉음·바람 자수정·해류 하늘).
+//     금색 원 위에 얹혀 반은 해도, 반은 띠에 걸친다. 겹치면 나중에 그린 것이
+//     위에 온다 — 차례는 바람 → 해류 → 침로. 침로가 늘 보이게 맨 위다
 //   · 해도 안: 지형·역풍 부채꼴·본 화면 테두리·배. 경위선·축척 표시는 없다
+//   · 표시값 넷도 해도 안이다 — 위경도(위)·해류(좌)·바람(우)·대지속력(아래).
+//     모서리 판은 걷어냈다. 좌우 값 옆의 색점이 원 위의 점과 색으로 짝지어진다
 //   · 0단 = 해도 없음. 안쪽을 띠 색으로 채우고 8방위 별을 되살린다
 // 조작: 계기는 마우스를 통과시킨다(pointer-events:none). 커서가 원 안인지는
 // mousemove 좌표로 직접 재고, 안이면 버튼(.near)을 보인다. 계기 위 휠은
@@ -1666,11 +1660,39 @@ const DIAL = (function(){
   const BAND = 30;                          // ★ 바깥 띠 두께
   const RC   = SIZE/2 - BAND;               // 해도 반지름 130 (지름 260)
   const RL   = SIZE/2 - BAND/2;             // 방위 글자 반지름 145 (띠 가운데)
-  const HEAD_R  = 6;                        // ★ 침로 점 반지름
-  const BAR_LEN = 26;                       // ★ 바람·해류 막대 길이 (금색 원 안팎 13씩)
-  const BAR_W   = 6.0;                      // ★ 바람 막대 굵기
-  const BAR_W2  = 2.8;                      // ★ 해류 막대 굵기 (바람 위에 얹는다)
-  const BAR_EDGE= 2.0;                      // ★ 막대 테두리선 — 두 바탕을 걸쳐도 형태 유지
+  const DOT_R   = 6;                        // ★ 침로·바람·해류 점 반지름 (셋이 같다)
+  const DOT_EDGE_W = 1.2;                   // ★ 점 테두리 굵기 — 두 바탕을 걸쳐도 형태 유지
+  const DOT_EDGE = '#f4dbd6';               // ★ 점 테두리 색 (셋이 같다)
+  const HEAD_C   = '#c0392b';               // ★ 침로 점 — 붉은색
+  const WIND_C   = '#8e6bb5';               // ★ 바람 점 — 자수정색
+  const CUR_C    = '#8fd3e8';               // ★ 해류 점 — 하늘색 (물빛)
+  // 원 안 표시값 넷 — 위경도는 위, 해류는 좌, 바람은 우, 대지속력은 아래.
+  // 넷의 '바깥 끝'이 같은 원(RING_R) 위에 앉는다. 기준점이 아니라 바깥 끝을 맞추는
+  // 까닭은 기준점의 뜻이 자리마다 다르기 때문이다 — 위아래 글자는 기준점이 글자
+  // 상자의 한가운데라 실제로는 글자 높이의 절반만큼 더 나가고, 좌우는 기준점이
+  // 블록의 끝이라 그 자리가 곧 바깥 끝이다. 그래서 각자 제 몫만큼 안으로 물려 그린다.
+  // 글자 크기를 나중에 바꿔도 바깥 끝은 저절로 맞는다.
+  // 원 위의 점이 반지름 124~136 을 쓰므로 바깥 끝은 그 안쪽에 머물러야 한다.
+  const RING_R  = 0.83;                     // ★ 표시값 넷의 바깥 끝이 앉는 자리 — 해도 반지름의 몇 할인가
+                                            //   (키우면 넷이 함께 테두리 쪽으로 붙는다)
+  const GEO_GAP = 17;                       // ★ 위경도 두 줄 간격 — 윗줄이 RING_R 에 앉는다
+  const GEO_F   = 13;                       // ★ 위경도 글자 크기
+  const GEO_C   = '#ffe9b8';                // ★ 위경도 색 — 금색
+  // 좌우는 색점·값·단위가 한 줄이다. 왼쪽은 색점이 블록의 바깥 끝이라 RING_R 에
+  // 바로 박히고, 오른쪽은 단위가 바깥 끝이라 블록 너비만큼 안으로 물려 놓는다.
+  // SIDE_W 는 흔한 자릿수를 기준으로 잡은 값이다 — 값이 길어지면 그만큼 밖으로 넘친다.
+  const SIDE_W  = 56;                       // ★ 오른쪽 블록 너비(px) — 색점을 안으로 물리는 거리
+  const TAG_GAP = 8;                        // ★ 색점과 값 사이 틈(px)
+  const VAL_GAP = 4;                        // ★ 값과 단위 사이 틈(px)
+  const TAG_R   = 3.6;                      // ★ 색점 반지름 — 어느 값인지 색으로 짝짓는다
+  const VAL_F   = 14;                       // ★ 좌우 값 글자 크기
+  const UNIT_F  = 10;                       // ★ 좌우 단위 글자 크기 (값보다 작고 어둡다)
+  const WIND_V  = '#e2d6ef';                // ★ 바람 값 색 — 점 색을 옅게 푼 것
+  const WIND_U  = '#bcaecb';                // ★ 바람 단위 색 — 값보다 어둡다
+  const CUR_V   = '#dff2f8';                // ★ 해류 값 색
+  const CUR_U   = '#a9c9d2';                // ★ 해류 단위 색
+  const GS_F    = 14;                       // ★ 대지속력 글자 크기 — 넷 중 가장 크다
+  const GS_C    = '#ffe9b8';                // ★ 대지속력 색 — 금색
   // 축척 단 — 지름이 담는 거리(km). [0] = 해도 없음(방위 표시로 대체).
   // 버튼은 1~6 만 오간다. 0 은 조정 패널에서만 — 실수로 지도를 끄지 않게.
   const SPAN_KM = [0, 250, 500, 1000, 2000, 4000, 8000];
@@ -1696,7 +1718,6 @@ const DIAL = (function(){
   // 기본 2단(500km). 기준 배율 100 에서 본 화면은 94km 이므로 5.3배 — 관례(5~10배)에 든다
   let step = 2;
   let bx=0, by=0, bw=0, bh=0, bstep=-1, bdpr=0;   // 구운 조각이 담은 월드 사각형
-  let tGeo='', tWind='', tCur='', tGs='';         // 모서리 표시값 — 바뀔 때만 DOM 을 건드린다
 
   // 해도가 담는 월드 사각형 — 원이라 가로세로가 같다
   function spanPx(){ return SPAN_KM[step] / KM_PER_PX; }
@@ -1801,28 +1822,24 @@ const DIAL = (function(){
       g.arc(cx,cy,RC*d, wFrom-n, wFrom+n); g.closePath(); g.fill();
     }
     g.restore();
-    // 3. 금색 원 — 해도의 테두리이자 침로 점이 도는 길
+    // 3. 금색 원 — 해도의 테두리이자 세 점(침로·바람·해류)이 도는 길
     g.strokeStyle='#c9b483'; g.lineWidth=1.5*d;
     g.beginPath(); g.arc(cx,cy,RC*d,0,7); g.stroke();
-    // 4·5. 바람·해류 막대 — 금색 원을 가로질러 걸친다 (안팎 13씩).
-    // 테두리선을 먼저 두르고 채운다 — 밝은 해도와 어두운 띠, 두 바탕을 걸쳐도
-    // 형태가 유지된다. 해류를 나중에, 더 얇게 — 겹쳐도 둘 다 읽힌다.
-    function bar(ang, halfW, fill){
+    // 4·5·6. 세 점 — 금색 원 위에 얹혀 돈다. 한 함수를 셋이 나눠 쓴다:
+    // 크기도 테두리도 어긋날 수 없고, 색 하나로만 갈린다. 밝은 해도와 어두운 띠
+    // 두 바탕을 걸치므로 밝은 테두리를 둘러 형태를 지킨다.
+    // 차례가 곧 겹칠 때의 위아래다 — 바람 → 해류 → 침로. 크기가 같아진 뒤로는
+    // 이 차례가 유일한 구분 수단이라, 가장 중요한 침로를 맨 위에 둔다.
+    function dot(ang, fill){
       g.save(); g.translate(cx,cy); g.rotate(ang);
-      g.strokeStyle='rgba(20,30,28,.85)'; g.lineWidth=BAR_EDGE*d;
-      g.strokeRect((RC-BAR_LEN/2)*d, -halfW*d, BAR_LEN*d, halfW*2*d);
-      g.fillStyle=fill;
-      g.fillRect((RC-BAR_LEN/2)*d, -halfW*d, BAR_LEN*d, halfW*2*d);
+      g.fillStyle=fill; g.strokeStyle=DOT_EDGE; g.lineWidth=DOT_EDGE_W*d;
+      g.beginPath(); g.arc(RC*d,0,DOT_R*d,0,7); g.fill(); g.stroke();
       g.restore();
     }
-    if(wFrom !== null) bar(wFrom, BAR_W/2, '#8fd3e8');
+    if(wFrom !== null) dot(wFrom, WIND_C);           // 바람이 불어오는 쪽
     const cs = Math.hypot(curVec.x, curVec.y);
-    if(cs > 1e-9) bar(Math.atan2(curVec.y, curVec.x), BAR_W2/2, '#c0392b');
-    // 6. 침로 점 — 금색 원 위를 도는 붉은 점 (나침반의 것 그대로)
-    g.save(); g.translate(cx,cy); g.rotate(ship.head);
-    g.fillStyle='#c0392b'; g.strokeStyle='#f4dbd6'; g.lineWidth=1.2*d;
-    g.beginPath(); g.arc(RC*d,0,HEAD_R*d,0,7); g.fill(); g.stroke();
-    g.restore();
+    if(cs > 1e-9) dot(Math.atan2(curVec.y, curVec.x), CUR_C);   // 해류가 흘러가는 쪽
+    dot(ship.head, HEAD_C);                          // 침로 — 늘 맨 위
     // 7. 방위 글자 — 띠 한가운데. 북만 밝게 (눈이 먼저 북을 찾도록)
     g.textAlign='center'; g.textBaseline='middle';
     g.font=(13*d)+'px Georgia'; g.fillStyle='#f2e6bf'; g.fillText('N', cx, cy-RL*d);
@@ -1840,26 +1857,54 @@ const DIAL = (function(){
         g.strokeRect(cx-rw/2, cy-rh/2, rw, rh);
       }
     }
-    // 9. 배 — 북 고정이라 침로를 그대로 돌린다. 늘 한가운데다
+    // 9. 원 안 표시값 넷 — 위경도(위)·해류(좌)·바람(우)·대지속력(아래).
+    // 모서리 판을 걷어내고 모두 원 안으로 들였다. 해도 위에 겹치므로 어두운
+    // 외곽선을 둘러 지형 위에서도 읽힌다 — 배·점처럼 매 프레임 그린다.
+    // 자리는 모두 상수가 정하고, 넷 다 반지름 115 안이라 원 위의 점과 닿지 않는다.
+    function lab(s, x, y, sz, fill, al){
+      g.textAlign=al||'center'; g.textBaseline='middle'; g.font=(sz*d)+'px Georgia';
+      g.strokeStyle='rgba(20,30,28,.9)'; g.lineWidth=sz*0.25*d; g.lineJoin='round';
+      g.strokeText(s, x, y); g.fillStyle=fill; g.fillText(s, x, y);
+    }
+    // 색점 — 좌우 값이 원 위의 어느 점을 말하는지 색으로 짝지어 준다.
+    // 이름표('바람'·'해류')를 색이 대신하므로 글자를 그만큼 덜 얹는다.
+    function tag(x, y, fill){
+      g.beginPath(); g.arc(x, y, TAG_R*d, 0, 7);
+      g.fillStyle=fill; g.strokeStyle='rgba(20,30,28,.9)'; g.lineWidth=1.4*d;
+      g.fill(); g.stroke();
+    }
+    // 위경도 — 위쪽 두 줄. 윗줄의 바깥 끝이 기준 원에 닿는다 (글자 절반만큼 물린다).
+    // 부호 대신 N/S·E/W 를 붙인다 (해도 관례)
+    const lon = wrapX(ship.x)/WORLD_W*360-180;
+    const lat = 90 - ship.y/WORLD_H*180;
+    const ringR = RC*RING_R*d;              // 넷의 바깥 끝이 앉는 원
+    const geoY = cy - ringR + GEO_F/2*d;
+    lab(geo(lat,'N','S'), cx, geoY, GEO_F, GEO_C);
+    lab(geo(lon,'E','W'), cx, geoY + GEO_GAP*d, GEO_F, GEO_C);
+    // 해류(좌)·바람(우) — 색점·값·단위가 한 줄. 둘 다 색점이 먼저 와서 읽는 차례가 같다.
+    // 왼쪽은 색점이 블록의 바깥 끝이라 반지름만큼 물리고, 오른쪽은 단위가 바깥 끝이라
+    // 블록 너비만큼 물린다 — 값이 길어지면 그만큼 밖으로 넘친다 (SIDE_W 주석).
+    function side(tagX, dir, val, unit, tagC, valC, unitC){
+      tag(tagX, cy, tagC);
+      const vx = tagX + dir*TAG_GAP*d;
+      lab(val, vx, cy, VAL_F, valC, dir > 0 ? 'left' : 'right');
+      g.font=(VAL_F*d)+'px Georgia';
+      const ux = vx + dir*(g.measureText(val).width + VAL_GAP*d);
+      lab(unit, ux, cy, UNIT_F, unitC, dir > 0 ? 'left' : 'right');
+    }
+    side(cx - ringR + TAG_R*d, 1, (cs*PX_TO_KN).toFixed(2), 'kn', CUR_C, CUR_V, CUR_U);
+    side(cx + ringR - SIDE_W*d, 1, (ship.windMs||0).toFixed(1), 'm/s', WIND_C, WIND_V, WIND_U);
+    // 대지속력 — 배가 실제로 땅에 대해 나아가는 속도라 넷 중 가장 중요하다.
+    // 배보다 먼저 그려 배가 위에 오게 한다.
+    const gs = Math.hypot(ship.vx + curVec.x, ship.vy + curVec.y)*PX_TO_KN;
+    lab(gs.toFixed(1)+' kn', cx, cy + ringR - GS_F/2*d, GS_F, GS_C);
+    // 10. 배 — 북 고정이라 침로를 그대로 돌린다. 늘 한가운데다
     const s = 5.5*d;
     g.save(); g.translate(cx,cy); g.rotate(ship.head);
     g.fillStyle = ship.grounded ? '#e0705f' : '#ffd98a';
     g.strokeStyle='#2a1e0e'; g.lineWidth=1.1*d;
     g.beginPath(); g.moveTo(s*1.7,0); g.lineTo(-s,s*0.9); g.lineTo(-s*0.4,0); g.lineTo(-s,-s*0.9);
     g.closePath(); g.fill(); g.stroke(); g.restore();
-    // 10. 모서리 표시값 — HTML 이 맡는다 (글꼴이 다른 UI 와 같아진다).
-    // 값이 바뀔 때만 DOM 을 건드린다 — 옛 나침반 카드의 방식 그대로.
-    const lon = wrapX(ship.x)/WORLD_W*360-180;
-    const lat = 90 - ship.y/WORLD_H*180;
-    const sGeo = '<b>'+geo(lat,'N','S')+'</b><b>'+geo(lon,'E','W')+'</b>';
-    if(sGeo !== tGeo){ tGeo = sGeo; const e=byId('dGeo'); if(e) e.innerHTML = sGeo; }
-    const sWind = (ship.windMs||0).toFixed(1)+' m/s';
-    if(sWind !== tWind){ tWind = sWind; const e=byId('dWind'); if(e) e.textContent = sWind; }
-    const sCur = (cs*PX_TO_KN).toFixed(2)+' kn';
-    if(sCur !== tCur){ tCur = sCur; const e=byId('dCur'); if(e) e.textContent = sCur; }
-    // 대지속력 = 배 자신의 속도 + 해류. 실제로 땅에 대해 나아가는 속도다
-    const sGs = (Math.hypot(ship.vx + curVec.x, ship.vy + curVec.y)*PX_TO_KN).toFixed(1)+' kn';
-    if(sGs !== tGs){ tGs = sGs; const e=byId('dGs'); if(e) e.textContent = sGs; }
   }
 
   // ── 단 전환 — 세 입구가 같은 값 하나를 본다 ──────────────────
@@ -1911,7 +1956,9 @@ const DIAL = (function(){
            shipXin, inCircle, landFor,
            get step(){ return step; },
            SPAN_KM, OVER, REBAKE, VIEW_MIN, SIZE, BAND, RC, RL,
-           HEAD_R, BAR_LEN, BAR_W, BAR_W2, BAR_EDGE, BTN_MIN, BTN_MAX };
+           DOT_R, DOT_EDGE_W, DOT_EDGE, HEAD_C, WIND_C, CUR_C,
+           RING_R, GEO_GAP, GEO_F, SIDE_W, TAG_GAP, VAL_GAP, TAG_R, VAL_F, UNIT_F,
+           GS_F, BTN_MIN, BTN_MAX };
 })();
 
 // ===== 바람 화살표 (화면 격자에 성기게) — B 로 토글 =====

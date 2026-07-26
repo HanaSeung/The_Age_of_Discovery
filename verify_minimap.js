@@ -24,7 +24,9 @@ const partDial = slice('// ===== 원형 계기 — 우하',
                        '// ===== 바람 화살표', '원형 계기');
 
 // ---- 껍데기 캔버스 — 무엇을 몇 번 그렸는지만 센다 ----
-const tally = { fill:0, stroke:0, fillRect:0, drawImage:0, text:0, paths:[] };
+// 글자는 개수뿐 아니라 내용도 담는다 — 표시값 넷이 모두 원 안으로 들어와,
+// 무엇이 적혔는지 볼 곳이 캔버스밖에 없다.
+const tally = { fill:0, stroke:0, fillRect:0, drawImage:0, text:0, paths:[], texts:[] };
 function fakeCtx(){
   return {
     set fillStyle(v){}, set strokeStyle(v){}, set lineWidth(v){}, set lineJoin(v){},
@@ -35,7 +37,8 @@ function fakeCtx(){
     strokeRect(){ tally.stroke++; },
     fill(p){ tally.fill++; if(p) tally.paths.push(p); },
     stroke(p){ tally.stroke++; if(p) tally.paths.push(p); },
-    fillText(){ tally.text++; }, strokeText(){ tally.text++; },
+    fillText(s){ tally.text++; tally.texts.push(String(s)); }, strokeText(){ tally.text++; },
+    measureText(s){ return { width: String(s).length * 7 }; },
     drawImage(){ tally.drawImage++; }
   };
 }
@@ -47,8 +50,7 @@ const dialCard = { cls:{}, classList:{ toggle(n,v){ dialCard.cls[n] = !!v; },
                                        remove(n){ dialCard.cls[n] = false; } } };
 const mkBtn = () => ({ disabled:false, addEventListener(){} });
 const dIn = mkBtn(), dOut = mkBtn();
-const mkRo = () => ({ innerHTML:'', textContent:'' });
-const dGeo = mkRo(), dWind = mkRo(), dCur = mkRo(), dGs = mkRo();
+// 모서리 판은 걷어냈다 — 계기가 찾는 DOM 은 캔버스·카드·버튼 둘뿐이다
 const store = {};
 
 // ---- 그리기에 필요한 바깥값 (원본과 같은 값으로 세운다) ----
@@ -85,11 +87,7 @@ const sandbox = {
     getElementById(id){ return id === 'dCanvas' ? dCanvas
                              : id === 'dial'    ? dialCard
                              : id === 'dIn'     ? dIn
-                             : id === 'dOut'    ? dOut
-                             : id === 'dGeo'    ? dGeo
-                             : id === 'dWind'   ? dWind
-                             : id === 'dCur'    ? dCur
-                             : id === 'dGs'     ? dGs : null; },
+                             : id === 'dOut'    ? dOut : null; },
     createElement(){ return fakeCanvas(); },
     documentElement: { addEventListener(){} }
   },
@@ -129,9 +127,9 @@ chk('세계 전체보다 좁다 — 국지 해도다', DIAL.SPAN_KM[N-1] < 40075
     DIAL.SPAN_KM[N-1] + 'km < 40,075km(적도 한 바퀴)');
 chk('해도 반지름이 띠에서 유도된다', DIAL.RC === DIAL.SIZE/2 - DIAL.BAND,
     `${DIAL.SIZE}/2 − ${DIAL.BAND} = ${DIAL.RC}`);
-chk('막대가 금색 원을 안팎으로 걸친다',
-    DIAL.RC - DIAL.BAR_LEN/2 < DIAL.RC && DIAL.RC + DIAL.BAR_LEN/2 <= DIAL.SIZE/2,
-    `${DIAL.RC - DIAL.BAR_LEN/2} ~ ${DIAL.RC + DIAL.BAR_LEN/2} (반지름 ${DIAL.SIZE/2} 안)`);
+chk('점이 금색 원을 안팎으로 걸친다 — 띠를 넘지 않는다',
+    DIAL.DOT_R > 0 && DIAL.RC + DIAL.DOT_R <= DIAL.SIZE/2,
+    `${DIAL.RC - DIAL.DOT_R} ~ ${DIAL.RC + DIAL.DOT_R} (반지름 ${DIAL.SIZE/2} 안)`);
 
 console.log('\n=== 1. 지도가 담는 범위 — 원이라 가로세로가 같다 ===');
 for(let s=1;s<N;s++){
@@ -284,18 +282,23 @@ chk('LAND_RINGS 가 없으면 통짜로 후퇴한다', (() => {
 console.log('\n=== 8. 한 프레임 그리기 ===');
 sandbox.__setZoom(100); ship.x = 2100; ship.y = 1500;
 DIAL.setStep(2); DIAL.doBake();
-tally.drawImage = 0; tally.text = 0; tally.fill = 0;
+tally.drawImage = 0; tally.text = 0; tally.fill = 0; tally.texts.length = 0;
 DIAL.draw();
 chk('구운 조각을 잘라 붙였다', tally.drawImage === 1, tally.drawImage + '회');
-chk('방위 글자 N·S·E·W 를 얹었다', tally.text === 4, tally.text + '회');
+chk('글자를 얹었다 — 방위 넷 + 표시값 넷', tally.text >= 16, tally.text + '회');
 chk('캔버스 크기가 CSS 와 짝이다',
     dCanvas.width === DIAL.SIZE && dCanvas.height === DIAL.SIZE,
     dCanvas.width + 'x' + dCanvas.height);
-chk('모서리에 위도·경도가 적힌다', /N|S/.test(dGeo.innerHTML) && /E|W/.test(dGeo.innerHTML),
-    '"' + dGeo.innerHTML.replace(/<[^>]+>/g,' ').trim() + '"');
-chk('모서리에 바람·해류·대지속력이 적힌다',
-    /m\/s$/.test(dWind.textContent) && / kn$/.test(dCur.textContent) && / kn$/.test(dGs.textContent),
-    [dWind.textContent, dCur.textContent, dGs.textContent].join(' | '));
+const T = tally.texts;
+chk('원 안에 위도·경도가 적힌다',
+    T.some(s => /°[NS]$/.test(s)) && T.some(s => /°[EW]$/.test(s)),
+    '"' + T.filter(s => /°[NSEW]$/.test(s)).join('  ') + '"');
+chk('원 안에 바람·해류 값과 단위가 적힌다',
+    T.includes('m/s') && T.includes('kn') && T.filter(s => /^\d+\.\d+$/.test(s)).length >= 2,
+    T.filter(s => /^\d+\.\d+$/.test(s)).join(' | '));
+chk('대지속력이 단위를 달고 적힌다', T.some(s => / kn$/.test(s)),
+    '"' + (T.find(s => / kn$/.test(s)) || '') + '"');
+chk('방위 넷을 적는다', ['N','S','E','W'].every(s => T.includes(s)));
 DIAL.setStep(0);
 tally.drawImage = 0; tally.fill = 0;
 DIAL.draw();
