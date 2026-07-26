@@ -123,20 +123,18 @@ chk('네 변에 테두리가 있다', /border:\s*1px solid/.test(tuneCss) && !/b
 chk('모서리가 둥글다', /border-radius:\s*\d+px/.test(tuneCss));
 chk('맨 위 띠가 둥근 윗모서리를 맡는다', /#tune \.head\{[^}]*border-radius:5px 5px 0 0/.test(src));
 
-console.log('\n=== 6. 좌표 — 나침반 카드와 어긋나지 않는가 ===');
-const cardCss = (src.match(/#compass\{[^}]*\}/) || [''])[0];
-const bodyC   = (src.match(/#compass \.body\{[^}]*\}/) || [''])[0];
-const geoC    = (src.match(/#compass \.geo\{[^}]*\}/) || [''])[0];
-const SIZE = +(src.match(/COMPASS_SIZE = (\d+)/) || [])[1];
-const padc = +(bodyC.match(/padding:\s*(\d+)px/) || [])[1];   // 여백은 .body 가 갖는다
-const cBot = +(cardCss.match(/bottom:\s*(\d+)px/) || [])[1];
-const bandH = +(geoC.match(/padding:\s*(\d+)px/) || [])[1]*2 +
-              Math.round(+(geoC.match(/font-size:\s*([\d.]+)px/) || [])[1]*1.35) + 1;
-const cardH = bandH + padc*2 + SIZE + 2;     // 띠 + 여백 + 캔버스 + 테두리
-chk('카드 폭이 패널과 같다', +(cardCss.match(/width:\s*(\d+)px/)||[])[1] === WIDTH,
-    `${WIDTH}px`);
-chk('패널이 카드 위에서 끝난다', SUB >= TOP + cardH + cBot,
-    `100vh−${SUB} / 필요 ${TOP + cardH + cBot} (카드 ${cardH}px)`);
+console.log('\n=== 6. 좌표 — 우하 원형 계기와 어긋나지 않는가 ===');
+// (2026.07.26 나침반 카드가 원형 계기 #dial 로 합쳐졌다. 높이 231 → 320)
+const dialCss = (src.match(/#dial\{[^}]*\}/) || [''])[0];
+const SIZE = +(src.match(/const SIZE = (\d+);\s*\/\/ 전체 한 변/) || [])[1];
+const cBot = +(dialCss.match(/bottom:\s*(\d+)px/) || [])[1];
+const cardH = SIZE;                          // 원이라 높이가 곧 SIZE 다
+chk('계기 크기가 상수와 같다', +(dialCss.match(/width:\s*(\d+)px/)||[])[1] === SIZE,
+    `${SIZE}px`);
+chk('패널이 계기 위에서 끝난다', SUB >= TOP + cardH + cBot,
+    `100vh−${SUB} / 필요 ${TOP + cardH + cBot} (계기 ${cardH}px)`);
+chk('여유가 과하지 않다 (30px 이하)', SUB - (TOP + cardH + cBot) <= 30,
+    (SUB - (TOP + cardH + cBot)) + 'px');
 // 출처 표시는 제거됐다. 관련 규칙·토글이 남아 있으면 죽은 코드다.
 chk('#src 규칙이 남아 있지 않다', !/#src/.test(src));
 chk('tune-open 토글이 남아 있지 않다', !/tune-open/.test(src));

@@ -112,7 +112,7 @@ if(err && err.stack){
 
 if(!err){
   console.log('\n=== 3. 첫 프레임을 그릴 수 있는가 ===');
-  for(const fn of ['resize','compass','drawShip','frameVignette']){
+  for(const fn of ['resize','DIAL.draw','drawShip','frameVignette']){
     let e2 = null;
     try { vm.runInContext(fn + '();', sandbox, {filename: fn}); } catch(e){ e2 = e; }
     chk(fn + '() 가 돈다', !e2, e2 ? (e2.name + ': ' + e2.message) : '');
@@ -122,16 +122,17 @@ if(!err){
   chk('#hud 요소·규칙이 없다', !/id="hud"/.test(html) && !/^\s*#hud/m.test(html));
   chk('전용 도우미도 함께 지웠다', !/const DIRS/.test(html) && !/function fmt\(/.test(html));
 
-  console.log('\n=== 4. 나침반이 제 캔버스에 그려지는가 ===');
+  console.log('\n=== 4. 원형 계기가 제 캔버스에 그려지는가 ===');
   drawn.length = 0;
-  try { vm.runInContext('compass();', sandbox, {filename:'compass'}); } catch(e){}
-  const onCard = drawn.filter(s => s.startsWith('cCanvas:')).length;
+  try { vm.runInContext('DIAL.draw();', sandbox, {filename:'dial'}); } catch(e){}
+  const onCard = drawn.filter(s => s.startsWith('dCanvas:')).length;
   const onMap  = drawn.filter(s => s.startsWith('c:')).length;
-  chk('나침반 캔버스에 그린다', onCard > 10, onCard + '회');
+  chk('계기 캔버스에 그린다', onCard > 10, onCard + '회');
   chk('지도 캔버스를 건드리지 않는다', onMap === 0, onMap + '회');
-  chk('숫자를 DOM 에 넣는다', els.cWind.textContent !== '' && els.cCur.textContent !== '',
-      `바람 "${els.cWind.textContent}" / 해류 "${els.cCur.textContent}"`);
-  chk('캔버스 크기가 잡혔다', els.cCanvas.width > 0, els.cCanvas.width + 'px');
+  chk('모서리 숫자를 DOM 에 넣는다',
+      els.dWind.textContent !== '' && els.dCur.textContent !== '' && els.dGs.textContent !== '',
+      `바람 "${els.dWind.textContent}" / 해류 "${els.dCur.textContent}" / 대지속력 "${els.dGs.textContent}"`);
+  chk('캔버스 크기가 잡혔다', els.dCanvas.width > 0, els.dCanvas.width + 'px');
 
   console.log('\n=== 5. 조정 패널이 만들어지는가 ===');
   chk('패널 내용이 채워졌다', els.tune.innerHTML.length > 500, els.tune.innerHTML.length + '자');

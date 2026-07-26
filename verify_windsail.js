@@ -26,9 +26,12 @@ chk('안내문에서 Shift 삭제', !/Shift<\/kbd> 순풍/.test(src));
 chk('패널에서 순풍 슬라이더 삭제', !/'순풍\(Shift\)'/.test(src));
 
 console.log('\n=== 3. 표시 ===');
-chk('풍향 장미 — 역풍 사각 부채꼴', /역풍 사각 부채꼴/.test(src));
-chk('풍향 장미 — 바람 바늘', /wFrom = Math\.atan2\(-windVec\.y, -windVec\.x\)/.test(src));
-chk('풍향 장미 — 해류 바늘', /해류 바늘/.test(src));
+// (2026.07.26 나침반이 원형 계기 DIAL 로 합쳐졌다. 주석 글자 대신 동작을 본다 —
+//  주석을 다듬을 때마다 남의 검증이 깨지는 것이 이 파일의 옛 약점이었다.)
+chk('원형 계기 — 역풍 사각 부채꼴', /SHIP\.spec\.nogoDeg\*Math\.PI\/180/.test(src) &&
+    /rgba\(200,60,40,\.16\)/.test(src));
+chk('원형 계기 — 바람 바늘', /wFrom = Math\.atan2\(-windVec\.y, -windVec\.x\)/.test(src));
+chk('원형 계기 — 해류 바늘', /Math\.atan2\(curVec\.y, curVec\.x\)/.test(src));
 chk('바람 화살표', /function drawWindArrows\(\)/.test(src));
 chk('B 키 토글', /if\(k==='b'\) show\.wind=!show\.wind/.test(src));
 chk('그리기 순서에 포함', /CURVIZ\.draw\(\);\s*\n\s*drawWindArrows\(\);/.test(src));

@@ -36,16 +36,16 @@ console.log('\n=== 2. 그리는 순서 ===');
 const ord = n => lines.findIndex(l => l.trim().startsWith(n));
 const iShip = ord('drawShip();'), iCloud = ord('cloudVeil();'),
       iPrec = ord('precipVeil();'), iNight = ord('nightVeil();'),
-      iStar = ord('starVeil();'), iComp = ord('compass();');
+      iStar = ord('starVeil();'), iComp = ord('DIAL.draw();');
 console.log('  배 ' + iShip + ' < 구름 ' + iCloud + ' < 비 ' + iPrec +
-            ' < 밤 ' + iNight + ' < 별 ' + iStar + ' < 나침반 ' + iComp);
+            ' < 밤 ' + iNight + ' < 별 ' + iStar + ' < 계기 ' + iComp);
 chk('비를 그린다', iPrec > 0);
 chk('구름 다음에 비가 온다', iCloud < iPrec);
 chk('비 다음에 밤이 온다', iPrec < iNight);
 const iLtn = ord('lightningVeil();');
 chk('번개가 밤 다음이다 — 어둠을 뚫고 밝아야 한다', iLtn > iNight && iLtn < iStar,
     '밤 ' + iNight + ' < 번개 ' + iLtn + ' < 별 ' + iStar);
-chk('나침반은 맨 뒤에 남는다', iComp > iStar);
+chk('계기는 맨 뒤에 남는다', iComp > iStar);
 
 // ===== 3. 시계 =====
 // 게임 시계가 아니라 실제 시계를 따라야 한다. 시계 배속을 48시간으로 올렸다고

@@ -283,9 +283,10 @@ if(rect){
 
 console.log('\n=== 7. 그리는 순서 ===');
 // 구름은 배 다음, 밤 앞이다. 밤보다 뒤로 가면 흐린 밤이 오히려 밝아진다.
-const order = ['drawShip()','cloudVeil()','nightVeil()','compass()','frameVignette()']
+// (2026.07.26 나침반이 원형 계기 DIAL 로 합쳐졌다 — 자리는 같다: 덮개 다음)
+const order = ['drawShip()','cloudVeil()','nightVeil()','DIAL.draw()','frameVignette()']
   .map(f => html.indexOf('\n  ' + f));
-chk('배·구름·밤·나침반·테두리 순서다',
+chk('배·구름·밤·계기·테두리 순서다',
     order.every((v,i) => v > 0 && (i === 0 || v > order[i-1])),
     order.join(' < '));
 

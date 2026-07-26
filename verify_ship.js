@@ -53,7 +53,7 @@ chk('물자 상한이 고정 숫자다', /'c:water',[^\]]*\b999\b/.test(specSrc)
 
 console.log('\n=== 4. 저장·되돌리기·값 복사 ===');
 chk('저장에 배가 들어간다', /localStorage\.setItem\(LS, JSON\.stringify\(\{ P:P, zoom:targetZoom, ships:SHIPS \}\)\)/.test(src));
-chk('저장 키를 올렸다 (옛 값 무효화)', /const LS = 'aod_tune_v3'/.test(src));
+chk('저장 키를 올렸다 (옛 값 무효화)', /const LS = 'aod_tune_v4'/.test(src));
 chk('있는 항목만 덮어쓴다', /if\(typeof src\[grp\]\[k\]==='number'\) SHIPS\[key\]\[grp\]\[k\] = src\[grp\]\[k\]/.test(src));
 chk('되돌리기가 배까지 되돌린다', /Object\.assign\(SHIPS\[key\]\[grp\], SHIP0\[key\]\[grp\]\)/.test(src));
 chk('값 복사가 능력치와 시작값을 나눈다',
@@ -172,7 +172,7 @@ chk('해류 입자도 함께 멈춘다', /if\(!paused\)\{[\s\S]{0,160}CURVIZ\.st
 chk('그리기는 정지 밖에 있다',
     loopSrc.indexOf('drawWorld') > loopSrc.indexOf('if(!paused)') &&
     !/if\(!paused\)\{[\s\S]*drawWorld/.test(loopSrc.slice(0, loopSrc.indexOf('drawWorld'))));
-chk('나침반도 계속 그린다', /compass\(\);/.test(loopSrc));
+chk('계기도 계속 그린다', /DIAL\.draw\(\);/.test(loopSrc));
 // 좌상단 항해일지는 걷어냈다. 정지 표시는 안내줄 하나만 남는다.
 chk('안내줄에 표시한다', /paused\?'on':'off'[\s\S]{0,60}Space/.test(src));
 chk('사라진 항해일지를 참조하지 않는다', !/drawHUD|getElementById\('hud'\)/.test(src));
@@ -448,7 +448,7 @@ chk('괄호 안에 기본값을 적는다', /class="df">\(기본값 /.test(src))
 chk('패널을 닫으면 말풍선도 접는다', /TUNE\.tipHide\(\)/.test(src));
 
 console.log('\n=== 5-9. 되돌리기 · 다시하기 ===');
-chk('걸음을 값 전부로 찍는다', /const snap = \(\) => JSON\.stringify\(\{ P:P, zoom:targetZoom, ships:SHIPS \}\)/.test(src));
+chk('걸음을 값 전부로 찍는다', /const snap = \(\) => JSON\.stringify\(\{ P:P, zoom:targetZoom, dial:DIAL\.step, ships:SHIPS \}\)/.test(src));
 chk('기억은 100걸음까지다', /max: 100/.test(src) && /HIST\.past\.length > HIST\.max\) HIST\.past\.shift/.test(src));
 chk('값이 그대로면 걸음이 아니다', /if\(before === snap\(\)\) return;/.test(src));
 chk('새로 만지면 앞으로는 버린다', /HIST\.future\.length = 0;/.test(src));
