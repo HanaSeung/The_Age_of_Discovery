@@ -39,7 +39,11 @@ chk('고르개가 있다', /<select id="tTarget">/.test(src));
 chk('SHIPS 에서 항목을 만든다', /for\(const key in SHIPS\)[\s\S]{0,120}<option value=/.test(src));
 chk('고르면 패널을 다시 짓는다',
     /tTarget'\)\.addEventListener\('change'[\s\S]{0,160}build\(\); refresh\(\)/.test(src));
-chk('배 이름·범장을 함께 보여준다', /class="tgt2">'\+SHIP\.name/.test(src));
+// 대상 고르개 바로 아래 같은 배를 한 번 더 적던 줄(.tgt2)은 걷어냈다 — 중복이었다.
+// 이름·범장은 일반 탭 머리(.gh)가 맡는다. 그쪽은 대상 고르개가 없어 중복이 아니다.
+chk('tgt2 잔재가 없다 — 표시도 CSS 도', !/tgt2/.test(src));
+chk('이름·범장은 일반 탭 머리가 보여준다',
+    /class="gh">'\+SHIP\.name[\s\S]{0,60}SHIP\.rig/.test(src));
 // 키 앞 표시로 저장 위치를 가른다
 chk('키 표시 규칙이 있다', /const GRP = \{ s:'spec', t:'state', c:'cargo' \}/.test(src));
 for(const [pre,grp] of [['s','능력치'],['t','상태'],['c','물자']])
@@ -449,7 +453,12 @@ chk('괄호 안에 기본값을 적는다', /class="df">\(기본값 /.test(src))
 chk('패널을 닫으면 말풍선도 접는다', /TUNE\.tipHide\(\)/.test(src));
 
 console.log('\n=== 5-9. 되돌리기 · 다시하기 ===');
-chk('걸음을 값 전부로 찍는다', /const snap = \(\) => JSON\.stringify\(\{ P:P, zoom:targetZoom, dial:DIAL\.step, ships:SHIPS \}\)/.test(src));
+// 한 줄로 못박지 않는다 — 항목이 늘면 줄이 갈리므로, 들어가야 할 것만 본다
+chk('걸음을 값 전부로 찍는다',
+    /const snap = \(\) => JSON\.stringify\(\{[\s\S]{0,200}\}\);/.test(src) &&
+    ['P:P','zoom:targetZoom','dial:DIAL.step','dialCap:DIAL.cap','ships:SHIPS']
+      .every(k => src.includes(k)),
+    '세계값 · 배율 · 해도 단 · 해도 최대 · 배');
 chk('기억은 100걸음까지다', /max: 100/.test(src) && /HIST\.past\.length > HIST\.max\) HIST\.past\.shift/.test(src));
 chk('값이 그대로면 걸음이 아니다', /if\(before === snap\(\)\) return;/.test(src));
 chk('새로 만지면 앞으로는 버린다', /HIST\.future\.length = 0;/.test(src));

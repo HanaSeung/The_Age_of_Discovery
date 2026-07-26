@@ -214,15 +214,27 @@ chk('DOM 캐시를 걷어냈다', !/tGeo|tWind|tCur|tGs/.test(dial));
 chk('DOM 을 건드리지 않는다', !/innerHTML|textContent/.test(drw));
 
 console.log('\n=== 9. 조정 패널 연결 ===');
-chk('해도 단 손잡이가 있다', /\['\*dialStep', '해도 단',\s*0,\s*6,\s*1,/.test(src));
-chk('말풍선이 있다', /'\*dialStep' : '우하 원형 계기/.test(src));
-chk('단마다 뜻이 적혀 있다', /'\*dialStep' : '0 없음\(방위\) · 1 250/.test(src));
-chk('읽기가 DIAL.step 을 본다', /if\(key === '\*dialStep'\) return DIAL\.step;/.test(src));
-chk('쓰기가 DIAL.setStep 을 부른다', /if\(key === '\*dialStep'\)\{ DIAL\.setStep\(v\); return; \}/.test(src));
-chk('기본값 칸은 비운다', /key === '\*zoom' \|\| key === '\*dialStep'/.test(src));
-chk('되돌리기 스냅샷에 든다', /dial:DIAL\.step/.test(src) &&
-    /if\(typeof o\.dial === 'number'\) DIAL\.setStep\(o\.dial\);/.test(src));
+// 손잡이의 뜻이 '지금 몇 단'에서 '어디까지 넓게 펼 수 있는가'로 바뀌었다.
+// 이름도 함께 갈았다 — 뜻이 달라진 채 옛 이름을 쓰면 다음에 읽는 사람이 속는다.
+chk('해도 최대 손잡이가 있다', /\['\*dialCap',\s*'해도 최대',\s*0,\s*6,\s*1,/.test(src));
+chk('옛 이름이 남아 있지 않다', !/dialStep/.test(src));
+chk('말풍선이 있다', /'\*dialCap'\s*: '우하 원형 계기/.test(src));
+chk('단마다 뜻이 적혀 있다', /'\*dialCap'\s*: '0 없음\(방위\) · 1 250/.test(src));
+chk('읽기가 DIAL.cap 을 본다', /if\(key === '\*dialCap'\) return DIAL\.cap;/.test(src));
+chk('쓰기가 DIAL.setCap 을 부른다', /if\(key === '\*dialCap'\)\{ DIAL\.setCap\(v\); return; \}/.test(src));
+chk('기본값 칸은 비운다', /key === '\*zoom' \|\| key === '\*dialCap'/.test(src));
+chk('되돌리기 스냅샷에 단과 상한이 다 든다',
+    /dial:DIAL\.step/.test(src) && /dialCap:DIAL\.cap/.test(src));
+chk('되돌릴 때 상한을 단보다 먼저 놓는다',
+    /o\.dialCap === 'number'\) DIAL\.setCap\(o\.dialCap\);[\s\S]{0,120}o\.dial === 'number'\) DIAL\.setStep\(o\.dial\);/.test(src),
+    '순서가 뒤집히면 되돌린 단이 옛 상한에 깎인다');
 chk('저장 키가 v4 로 올랐다', /const LS = 'aod_tune_v4'/.test(src) && !/aod_tune_v3/.test(src));
+// 파수꾼 — 넓게 보는 끝을 다시 고정 상수로 되돌리지 않는가
+chk('BTN_MAX 가 되살아나지 않았다', !/BTN_MAX/.test(src),
+    '넓게 보는 끝은 상수가 아니라 cap 이 정한다');
+chk('− 가 상한을 본다', /function stepOut\(\)\{\s*if\(step < cap\)/.test(src));
+chk('상한이 바뀌면 단을 한 함수가 가둔다', /function clampStep\(\)\{/.test(src) &&
+    /cap = v; saveCap\(\); clampStep\(\);/.test(src));
 
 console.log('\n=== 10. 걷어낸 것 ===');
 for(const dead of ['COMPASS_R0','COMPASS_PAD','COMPASS_SIZE','COMPASS_S','resizeCompass',

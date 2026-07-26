@@ -108,8 +108,9 @@
    나올 틈이 없다. 대신 디버그 탭에만 있는 것이라 탭에 따라 여닫는다. */
 #tune .subhead{flex:0 0 auto;padding:10px 14px 4px;background:#121c1a;}
 #tune .subhead.off{display:none;}
-#tune .subhead .sub{margin-top:0;margin-bottom:0;}
-#tune .subhead .tgt2{margin-bottom:0;}
+/* 대상 줄이 위아래 8px 로 같아진다 — 아래 8px 은 .tgt 4 + subhead 안쪽 4 다.
+   탭 줄은 위 10 / 아래 8 이라 소제목답게 위가 조금 더 열린다. */
+#tune .subhead .sub{margin-top:0;margin-bottom:8px;}
 #tune .sub{display:flex;gap:5px;margin:10px 0 4px;}
 #tune .si{flex:1;text-align:center;padding:4px 0;border-radius:4px;cursor:pointer;
   color:#9fb3ac;font-size:12px;border:1px solid #33443f;background:#16211f;}
@@ -180,7 +181,6 @@
   #tune .tgt select{flex:1 1 auto;min-width:0;background:#1b2b28;color:#ffe9b8;
     border:1px solid #5a6e69;border-radius:4px;padding:5px 6px;
     font-size:11.5px;font-family:inherit;cursor:pointer;}
-  #tune .tgt2{color:#7f8f8b;font-size:10.5px;margin-bottom:6px;}
   /* 일반 탭 — 한 줄에 [라벨][막대][값]. 두 줄형보다 세로를 4분의 1 아낀다.
      폭 배분: 내용폭 260 = 라벨66 + 사이8 + 막대108 + 사이8 + 값70
      라벨 칸은 디버그 탭과 같은 66px — 탭을 오갈 때 왼쪽 줄이 흔들리지 않는다. */
@@ -1694,7 +1694,8 @@ const DIAL = (function(){
   const GS_F    = 14;                       // ★ 대지속력 글자 크기 — 넷 중 가장 크다
   const GS_C    = '#ffe9b8';                // ★ 대지속력 색 — 금색
   // 축척 단 — 지름이 담는 거리(km). [0] = 해도 없음(방위 표시로 대체).
-  // 버튼은 1~6 만 오간다. 0 은 조정 패널에서만 — 실수로 지도를 끄지 않게.
+  // 버튼은 1 부터 상한(cap)까지만 오간다. 0(해도 없음)은 상한을 0 으로 내렸을
+  // 때에만 나온다 — 버튼으로 실수로 지도를 꺼 버리는 일이 없다.
   const SPAN_KM = [0, 250, 500, 1000, 2000, 4000, 8000];
   const OVER = 2.0;                         // ★ 굽는 조각은 보이는 것의 몇 배인가
   const REBAKE = 0.75;                      // ★ 여유의 몇 할을 쓰면 다시 굽는가
@@ -1704,7 +1705,9 @@ const DIAL = (function(){
   // 옛 0단은 500km 인데 새 0단은 '해도 없음'이라, 옛 저장값 0을 읽는 순간
   // 지도가 꺼진 채 시작하게 된다. 옛 키는 [7단계]에서 지운다.
   const LS_STEP = 'aod_dial_step';
-  const BTN_MIN = 1, BTN_MAX = SPAN_KM.length-1;   // 버튼이 오가는 범위
+  const LS_CAP  = 'aod_dial_cap';                  // 해도 최대 — 따로 저장한다
+  const BTN_MIN = 1;                    // 확대는 늘 1단까지. 넓게 보는 끝은 cap 이 정한다
+  const CAP_MAX = SPAN_KM.length-1;     // 상한이 가질 수 있는 가장 큰 값
 
   function byId(id){ try{ return document.getElementById(id); }catch(e){ return null; } }
   function dpr(){ try{ return Math.min(window.devicePixelRatio||1, 2); }catch(e){ return 1; } }
@@ -1717,6 +1720,9 @@ const DIAL = (function(){
 
   // 기본 2단(500km). 기준 배율 100 에서 본 화면은 94km 이므로 5.3배 — 관례(5~10배)에 든다
   let step = 2;
+  // 해도 최대 — 이 단보다 넓게는 펼칠 수 없다. 기본은 전부 열림.
+  // 나중에 선원 능력으로 해금하면 이 값을 올려 주면 된다.
+  let cap = CAP_MAX;
   let bx=0, by=0, bw=0, bh=0, bstep=-1, bdpr=0;   // 구운 조각이 담은 월드 사각형
 
   // 해도가 담는 월드 사각형 — 원이라 가로세로가 같다
@@ -1908,17 +1914,34 @@ const DIAL = (function(){
   }
 
   // ── 단 전환 — 세 입구가 같은 값 하나를 본다 ──────────────────
+  // 지금 보는 단(step)과 펼칠 수 있는 끝(cap), 둘의 관계는 clampStep() 하나가 지킨다.
+  // 합법 범위는 cap 이 0 이면 {0} 하나뿐이고, 1 이상이면 1…cap 이다. 값을 따로
+  // 적지 않고 범위에서 끌어내므로, 단 개수가 늘어도 규칙은 그대로다.
+  //   · 상한을 내리면 보고 있던 단이 딸려 내려온다
+  //   · 상한을 올리면 보고 있던 단은 그대로다 (이미 합법이므로 손대지 않는다)
+  //   · 0 에서 풀리면 가장 가까운 합법값인 1단으로 열린다
   function saveStep(){ try{ localStorage.setItem(LS_STEP, String(step)); }catch(e){} }
+  function saveCap(){  try{ localStorage.setItem(LS_CAP,  String(cap));  }catch(e){} }
+  function clampStep(){
+    const s = cap === 0 ? 0 : Math.min(Math.max(step, BTN_MIN), cap);
+    if(s !== step){ step = s; saveStep(); }
+  }
   function stepIn(){  if(step > BTN_MIN){ step--; saveStep(); } }   // + 좁게
-  function stepOut(){ if(step < BTN_MAX){ step++; saveStep(); } }   // − 넓게
-  function setStep(s){                                              // 조정 패널 — 0 허용
+  function stepOut(){ if(step < cap){    step++; saveStep(); } }    // − 넓게, 끝은 상한
+  function setStep(s){                                   // 지금 보는 단을 직접 놓는다
     s = Math.round(s);
-    if(s >= 0 && s < SPAN_KM.length && s !== step){ step = s; saveStep(); }
+    if(s < 0 || s > CAP_MAX) return;                     // 표에 없는 단은 버린다
+    step = s; clampStep(); saveStep(); syncBtn();
+  }
+  function setCap(v){                                    // 해도 최대 — 조정 패널·해금
+    v = Math.round(v);
+    if(v < 0 || v > CAP_MAX || v === cap) return;
+    cap = v; saveCap(); clampStep(); syncBtn();
   }
   function syncBtn(){
     const bi = byId('dIn'), bo = byId('dOut');
-    if(bi) bi.disabled = step <= BTN_MIN;
-    if(bo) bo.disabled = step >= BTN_MAX;
+    if(bi) bi.disabled = step <= BTN_MIN;   // 상한이 0 이면 단도 0 이라 둘 다 함께 죽는다
+    if(bo) bo.disabled = step >= cap;
   }
 
   // ── 커서 감지 — 계기는 통과 상태 그대로, 좌표로 원 안을 잰다 ──
@@ -1945,20 +1968,25 @@ const DIAL = (function(){
     if(bo) bo.addEventListener('click', () => { stepOut(); syncBtn(); });
   }catch(e){}
 
-  // 저장값 복원 — 없으면 기본 2단(500km)으로 시작한다
+  // 저장값 복원 — 상한을 먼저 읽어야 단을 그 안으로 끌어들일 수 있다.
+  // 없으면 상한은 전부 열림, 단은 기본 2단(500km)으로 시작한다
+  try{ const c = parseInt(localStorage.getItem(LS_CAP), 10);
+       if(c >= 0 && c <= CAP_MAX) cap = c; }catch(e){}
   try{ const s = parseInt(localStorage.getItem(LS_STEP), 10);
-       if(s >= 0 && s < SPAN_KM.length) step = s; }catch(e){}
+       if(s >= 0 && s <= CAP_MAX) step = s; }catch(e){}
+  clampStep();
   // 옛 미니맵의 저장 키 청소 — 단의 뜻이 바뀌어 물려받지 않는다 (위 LS_STEP 주석)
   try{ localStorage.removeItem('aod_mini'); localStorage.removeItem('aod_mini_step'); }catch(e){}
   syncBtn();
 
-  return { draw, need, doBake, stepIn, stepOut, setStep, viewRect, bakeRect, spanPx,
+  return { draw, need, doBake, stepIn, stepOut, setStep, setCap, viewRect, bakeRect, spanPx,
            shipXin, inCircle, landFor,
            get step(){ return step; },
+           get cap(){ return cap; },
            SPAN_KM, OVER, REBAKE, VIEW_MIN, SIZE, BAND, RC, RL,
            DOT_R, DOT_EDGE_W, DOT_EDGE, HEAD_C, WIND_C, CUR_C,
            RING_R, GEO_GAP, GEO_F, SIDE_W, TAG_GAP, VAL_GAP, TAG_R, VAL_F, UNIT_F,
-           GS_F, BTN_MIN, BTN_MAX };
+           GS_F, BTN_MIN, CAP_MAX };
 })();
 
 // ===== 바람 화살표 (화면 격자에 성기게) — B 로 토글 =====
@@ -2919,7 +2947,7 @@ const TUNE = (function(){
   const LS = 'aod_tune_v4';   // 파라미터 구성이 바뀌면 올린다 (옛 저장값 무효화)
   // [키, 라벨, 최소, 최대, 간격, 단위, 소수자리]
   // 키 앞의 표시가 어디에 저장할지를 정한다:
-  //   s: 배 능력치   t: 배 상태   c: 물자   *: 특수(zoom·dialStep)   없으면 세계값 P
+  //   s: 배 능력치   t: 배 상태   c: 물자   *: 특수(zoom·dialCap)   없으면 세계값 P
   // 상태·물자의 상한은 정원과 묶지 않는다. 정원을 줄이는 순간 현재값이 잘리면
   // 시험하기 불편하고, 정원 초과 자체도 시험해 봐야 할 상황이다.
   const SHIP_SPEC = [
@@ -2993,7 +3021,7 @@ const TUNE = (function(){
     ['sndThWob',  '천둥 요동',   0,    1,  0.05,'',     2],
     ['@화면'],
     ['*zoom',     '지도 배율',   0.3, 100, 0.1, '×',    2],
-    ['*dialStep', '해도 단',     0,    6,  1,   '단',   0]
+    ['*dialCap',  '해도 최대',   0,    6,  1,   '단',   0]
   ];
   // 손잡이마다 무엇을 하는가. 마우스를 올리면 말풍선으로 나온다.
   // 스펙 표에 칸을 하나 더 붙이지 않고 따로 둔 이유는 표의 세로줄을 지키기
@@ -3065,11 +3093,11 @@ const TUNE = (function(){
     'sndThWob'  : '우르릉이 굴러가는 느낌',
     // ─ 화면
     '*zoom'     : '해도를 얼마나 확대해 보는가',
-    '*dialStep' : '우하 원형 계기의 해도가 얼마나 넓게 담는가'
+    '*dialCap'  : '우하 원형 계기의 해도를 어디까지 넓게 펼 수 있는가'
   };
   // 값 하나하나에 뜻이 있는 손잡이 — 말풍선 둘째 줄에 붙는다
   const DESC_LEGEND = {
-    '*dialStep' : '0 없음(방위) · 1 250 · 2 500 · 3 1000 · 4 2000 · 5 4000 · 6 8000 km',
+    '*dialCap'  : '0 없음(방위) · 1 250 · 2 500 · 3 1000 · 4 2000 · 5 4000 · 6 8000 km',
     'nightMode' : '0 끄기 · 1 어둡게 · 2 등불 · 3 색조',
     'cloudMode' : '0 끄기 · 1 안개 · 2 덩어리',
     'precipMode': '0 끄기 · 1 켜기',
@@ -3082,19 +3110,19 @@ const TUNE = (function(){
   const idOf = k => k.replace(/[*:]/g, '_');          // 키를 DOM id 로
   function pget(key){
     if(key === '*zoom') return zoom;
-    if(key === '*dialStep') return DIAL.step;
+    if(key === '*dialCap') return DIAL.cap;
     const i = key.indexOf(':');
     return i < 0 ? P[key] : SHIP[GRP[key[0]]][key.slice(i+1)];
   }
   function pset(key, v){
     if(key === '*zoom'){ targetZoom = Math.max(ZMIN, Math.min(ZMAX, v)); return; }
-    if(key === '*dialStep'){ DIAL.setStep(v); return; }   // 0 허용 — 패널만의 특권
+    if(key === '*dialCap'){ DIAL.setCap(v); return; }   // 상한을 내리면 단이 딸려 온다
     const i = key.indexOf(':');
     if(i < 0) P[key] = v; else SHIP[GRP[key[0]]][key.slice(i+1)] = v;
     syncDerived();
   }
   function pdef(key){                                  // 괄호 안 기본값
-    if(key === '*zoom' || key === '*dialStep') return '—';
+    if(key === '*zoom' || key === '*dialCap') return '—';
     const i = key.indexOf(':');
     return i < 0 ? P0[key] : SHIP0[SHIP.key][GRP[key[0]]][key.slice(i+1)];
   }
@@ -3107,13 +3135,16 @@ const TUNE = (function(){
   // 적으면 형식이 둘로 갈리는데, 통째로 찍으면 슬라이더 하나든 전체
   // 초기화든 되살리는 방법이 하나다. 숫자 백여 개짜리라 양도 가볍다.
   const HIST = { past: [], future: [], max: 100 };
-  const snap = () => JSON.stringify({ P:P, zoom:targetZoom, dial:DIAL.step, ships:SHIPS });
+  const snap = () => JSON.stringify({ P:P, zoom:targetZoom,
+                                      dial:DIAL.step, dialCap:DIAL.cap, ships:SHIPS });
   function restore(s){
     const o = JSON.parse(s);
     Object.assign(P, o.P);
     for(const key in SHIPS) for(const grp of ['spec','state','cargo'])
       if(o.ships[key]) Object.assign(SHIPS[key][grp], o.ships[key][grp]);
     if(typeof o.zoom === 'number') targetZoom = Math.max(ZMIN, Math.min(ZMAX, o.zoom));
+    // 상한을 먼저 되돌려야 단이 그 안으로 들어간다 (순서가 뒤바뀌면 단이 깎인다)
+    if(typeof o.dialCap === 'number') DIAL.setCap(o.dialCap);
     if(typeof o.dial === 'number') DIAL.setStep(o.dial);
     // pull() 은 손이 올라가 있는 칸을 건드리지 않는다 — 슬라이더를 놓은 직후엔
     // 그 슬라이더에 초점이 남아 있어서 되돌려도 손잡이가 제자리에 선다.
@@ -3211,8 +3242,7 @@ const TUNE = (function(){
     let tg = '<div class="tgt"><span>대상</span><select id="tTarget">';
     for(const key in SHIPS)
       tg += '<option value="'+key+'"'+(key===SHIP.key?' selected':'')+'>'+SHIPS[key].label+'</option>';
-    tg += '</select></div>'+
-          '<div class="tgt2">'+SHIP.name+' · '+SHIP.rig+'</div>';
+    tg += '</select></div>';
     h += '<div class="subhead" id="subHead">'+
          '<div class="sub">'+
          '<span class="si" id="si_ship">배</span>'+

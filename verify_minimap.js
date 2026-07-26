@@ -120,7 +120,9 @@ chk('1~6단이 오름차순이다',
 chk('여섯 단이 배증이다 (250·500·…·8000)',
     DIAL.SPAN_KM.slice(2).every((v,i) => v === DIAL.SPAN_KM[i+1]*2),
     DIAL.SPAN_KM.slice(1).join('·'));
-chk('버튼 범위가 1~6 이다 — 0은 조정 패널만', DIAL.BTN_MIN === 1 && DIAL.BTN_MAX === 6);
+chk('확대 끝이 1단이다 — 0(해도 없음)은 버튼 밖', DIAL.BTN_MIN === 1);
+chk('상한이 가질 수 있는 가장 큰 값이 마지막 단이다', DIAL.CAP_MAX === N-1,
+    DIAL.CAP_MAX + '단');
 chk('굽는 조각이 보이는 것보다 넓다', DIAL.OVER > 1, DIAL.OVER + '배');
 chk('문턱이 여유 안쪽이다', DIAL.REBAKE > 0 && DIAL.REBAKE < 1, DIAL.REBAKE);
 chk('세계 전체보다 좁다 — 국지 해도다', DIAL.SPAN_KM[N-1] < 40075,
@@ -140,8 +142,10 @@ for(let s=1;s<N;s++){
       km.toFixed(1) + 'km');
   chk(`${s}단 가로세로가 같다`, Math.abs(v.h - v.w) < 1e-9);
 }
-DIAL.setStep(0);
+// 0단은 이제 상한을 0 으로 내렸을 때에만 나온다 (setStep 으로는 못 간다)
+DIAL.setCap(0);
 chk('0단은 담는 거리가 0 — 구울 것이 없다', DIAL.spanPx() === 0 && DIAL.need() === false);
+DIAL.setCap(DIAL.CAP_MAX);
 
 console.log('\n=== 2. 불변식 — 보이는 조각은 늘 구운 조각 안에 있다 ===');
 // 이것이 깨지면 화면에 굽지 않은 자리가 나온다. 배를 오래 걷게 하며 매 걸음 확인.
@@ -199,6 +203,7 @@ for(const y of [0, 30, WORLD_H-30, WORLD_H]){
 }
 
 console.log('\n=== 5. 단 전환 — 세 입구가 같은 값을 본다 ===');
+DIAL.setCap(DIAL.CAP_MAX);                  // 상한을 전부 열어 두고 시작한다
 DIAL.setStep(2); ship.x = 2100; ship.y = 1500; DIAL.doBake();
 const w2 = DIAL.viewRect().w;
 DIAL.setStep(3);
@@ -209,20 +214,44 @@ chk('단을 올리면 담는 범위가 넓어진다', DIAL.viewRect().w > w2,
 DIAL.setStep(1); DIAL.stepIn();
 chk('+ 는 1단 아래로 못 간다 — 0(해도 없음)은 버튼 밖', DIAL.step === 1);
 DIAL.setStep(6); DIAL.stepOut();
-chk('− 는 6단 위로 못 간다', DIAL.step === 6);
+chk('− 는 상한 위로 못 간다', DIAL.step === 6);
 DIAL.setStep(3); DIAL.stepIn();
 chk('+ 가 좁게 본다 (단 감소)', DIAL.step === 2,
     DIAL.SPAN_KM[3] + 'km → ' + DIAL.SPAN_KM[2] + 'km');
 DIAL.stepOut(); DIAL.stepOut();
 chk('− 가 넓게 본다 (단 증가)', DIAL.step === 4);
-DIAL.setStep(0);
-chk('조정 패널은 0단을 넣을 수 있다', DIAL.step === 0);
-DIAL.setStep(9); DIAL.setStep(-1);
-chk('범위 밖 값은 버린다', DIAL.step === 0);
-DIAL.setStep(5);
+DIAL.setStep(5); DIAL.setStep(9); DIAL.setStep(-1);
+chk('표에 없는 단은 버린다', DIAL.step === 5, DIAL.step + '단');
 chk('단이 저장된다 (aod_dial_step)', store['aod_dial_step'] === '5',
     '"' + store['aod_dial_step'] + '"');
 chk('옛 미니맵 저장 키를 청소했다', !('aod_mini' in store) && !('aod_mini_step' in store));
+
+console.log('\n=== 5-1. 해도 최대 — 상한이 단을 가둔다 ===');
+// 합법 범위는 상한이 0 이면 {0} 하나뿐이고, 1 이상이면 1…상한이다.
+// 값을 따로 적지 않고 이 범위에서 끌어내므로 아래 여섯 가지가 한 규칙에서 나온다.
+DIAL.setCap(DIAL.CAP_MAX); DIAL.setStep(6);
+DIAL.setCap(3);
+chk('상한을 내리면 보고 있던 단이 딸려 내려온다', DIAL.step === 3,
+    '6단에서 상한 3 → ' + DIAL.step + '단');
+DIAL.stepOut();
+chk('− 가 상한에서 멈춘다', DIAL.step === 3);
+DIAL.setCap(6);
+chk('상한을 올리면 보고 있던 단은 그대로다', DIAL.step === 3);
+DIAL.stepOut();
+chk('올린 뒤에는 더 넓게 갈 수 있다', DIAL.step === 4);
+DIAL.setCap(0);
+chk('상한 0 이면 해도가 꺼진다 — 방위만 남는다',
+    DIAL.step === 0 && DIAL.spanPx() === 0 && DIAL.need() === false);
+DIAL.stepIn(); DIAL.stepOut();
+chk('상한 0 에서는 두 버튼 다 아무 일도 못 한다', DIAL.step === 0);
+DIAL.setCap(3);
+chk('0 에서 풀리면 1단으로 열린다', DIAL.step === 1, '가장 가까운 합법값');
+DIAL.setCap(9); DIAL.setCap(-1);
+chk('표에 없는 상한은 버린다', DIAL.cap === 3, DIAL.cap + '단');
+DIAL.setCap(5);
+chk('상한이 저장된다 (aod_dial_cap)', store['aod_dial_cap'] === '5',
+    '"' + store['aod_dial_cap'] + '"');
+DIAL.setCap(DIAL.CAP_MAX);                  // 뒤 절들이 쓰도록 되돌려 둔다
 
 console.log('\n=== 6. 화면 테두리 — 해도에 남은 유일한 크기 단서 ===');
 // 축척 막대·숫자·경위선을 다 없앴으므로(2026.07.26 결정) 이것만 남았다.
@@ -299,12 +328,13 @@ chk('원 안에 바람·해류 값과 단위가 적힌다',
 chk('대지속력이 단위를 달고 적힌다', T.some(s => / kn$/.test(s)),
     '"' + (T.find(s => / kn$/.test(s)) || '') + '"');
 chk('방위 넷을 적는다', ['N','S','E','W'].every(s => T.includes(s)));
-DIAL.setStep(0);
+DIAL.setCap(0);
 tally.drawImage = 0; tally.fill = 0;
 DIAL.draw();
 chk('0단은 조각을 붙이지 않는다', tally.drawImage === 0);
 chk('0단은 8방위 별을 되살린다', tally.fill >= 9,
     tally.fill + '회 채움 (별 8 + 띠 바탕)');
+DIAL.setCap(DIAL.CAP_MAX);
 
 console.log('\n=== 9. 커서 감지 — 계기는 통과, 좌표로 원 안을 잰다 ===');
 sandbox.__setWH(1920, 1080);
