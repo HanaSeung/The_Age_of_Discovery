@@ -1,5 +1,8 @@
-# 빌드 캐시 — build_*.py 가 실행 시 자동으로 내려받는 원본 데이터 (약 27MB)
+# 빌드 캐시 — build\build_*.py 가 실행 시 raw\ 에 자동으로 내려받는 원본 데이터 (약 27MB)
 # 저장소에 둘 필요 없음. 필요하면 스크립트를 다시 실행하면 재생성된다.
+raw/
+wind_u_raw.txt
+wind_v_raw.txt
 ne_10m_bathymetry_*.geojson
 ne_10m_land.geojson
 ne_50m_land.geojson
@@ -11,9 +14,6 @@ precip_dds.txt
 airtemp_raw.txt
 airtemp_dds.txt
 star_raw.txt
-
-# 작업 기록 (로컬 보관 전용 — GitHub에 올리지 않음)
-work_log/
 
 # 파이썬
 __pycache__/

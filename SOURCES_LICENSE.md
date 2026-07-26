@@ -39,7 +39,7 @@
 - **원 격자**: 1080 × 481 (0.333°), u/v 성분, 단위 m/s, 육지 = null
 
 ## 가공 내역 (재현 가능 — `build_currents.py`)
-1. 원본 JSON 다운로드 (5.2 MB, `oscar_raw.json` 로 캐시)
+1. 원본 JSON 다운로드 (5.2 MB, `raw\oscar_raw.json` 로 캐시)
 2. **2° 격자(180 × 90)로 박스 평균** 다운샘플 — null(육지) 셀은 평균에서 제외
 3. 데이터 없는 셀(육지/결측)은 u = v = 0
 4. **양자화**: m/s → cm/s → 2 cm/s 단위 int8 (범위 ±2.54 m/s)
@@ -283,7 +283,7 @@
 
 ## 가공 내역 (재현 가능 — `build_precip.py` / `build_airtemp.py`)
 1. `.dds` 로 격자 크기를 먼저 확인 (창구가 바뀌면 여기서 걸린다)
-2. `.ascii` 전체 다운로드 후 원문 캐시 (`precip_raw.txt` 2.9 MB / `airtemp_raw.txt` 2.3 MB)
+2. `.ascii` 전체 다운로드 후 원문 캐시 (`raw\precip_raw.txt` 2.9 MB / `raw\airtemp_raw.txt` 2.3 MB)
 3. 단위 환산 — 강수 `× 86400` → mm/일, 기온 `− 273.15` → ℃ (켈빈 여부는 평균값으로 자동 판별)
 4. 가우시안 192×94 → 등간격 **4° 90×45** 박스 평균 (결측 셀 제외)
 5. 양자화 → base64 임베드, 각 **48,600 byte / 64 KB**
