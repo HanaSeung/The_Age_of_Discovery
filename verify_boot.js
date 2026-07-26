@@ -143,5 +143,29 @@ if(!err){
     chk(s + ' 생성됨', els.tune.innerHTML.includes(s));
 }
 
+// ===== 6. 검증들이 기계를 가리지 않는가 =====
+// 작업을 C: 와 D: 두 기계에서 번갈아 한다. 검증이 원본을 절대경로로 열면
+// 한쪽 기계에서만 돌고 다른 쪽에서는 파일을 못 찾아 통째로 터진다 —
+// 그러면 그 파일의 검사가 하나도 돌지 않으면서 목록에는 실패 하나로만 보인다.
+// verify_helm.js 가 실제로 그랬다. 되풀이되지 않게 여기서 지킨다.
+console.log('\n=== 6. 검증들이 기계를 가리지 않는가 ===');
+{
+  const fsx = require('fs'), px = require('path');
+  const files = fsx.readdirSync(__dirname).filter(f => /^verify_.*\.js$/.test(f));
+  const bad = [];
+  for(const f of files){
+    const t = fsx.readFileSync(px.join(__dirname, f), 'utf8');
+    for(const ln of t.split(/\r?\n/)){
+      if(/^\s*\/\//.test(ln)) continue;            // 주석 속 경로는 설명이라 봐준다
+      // 구분자 뒤에 낱말이 이어져야 경로로 본다 — 'c:/ 처럼 끝나는 정규식 리터럴을
+      // 경로로 잘못 잡지 않기 위해서다 (verify_ship.js 에 실제로 그런 줄이 있다)
+      if(/['"`][A-Za-z]:[\\/]{1,2}\w/.test(ln)) bad.push(f + ' ← ' + ln.trim().slice(0, 60));
+    }
+  }
+  chk('검증 파일을 찾았다', files.length > 10, files.length + '개');
+  chk('절대경로를 박은 곳이 없다 — 두 기계에서 같이 돈다', bad.length === 0,
+      bad.length ? bad.join(' / ') : '__dirname 기준으로만 연다');
+}
+
 console.log(`\n${fail === 0 ? '전부 통과' : '실패 있음'} — 통과 ${pass}, 실패 ${fail}\n`);
 process.exit(fail ? 1 : 0);
