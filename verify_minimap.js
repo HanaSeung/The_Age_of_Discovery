@@ -53,6 +53,17 @@ const KM_PER_PX=${KM_PER_PX};
 const DEG2PXX=WORLD_W/360, DEG2PXY=WORLD_H/180;
 const DEPTH_COL=['a','b','c','d','e'], LAND_C='#d8bf8e', COAST='#6b4a2a', VOID='#20302d';
 const landPath={ __isPath:true };
+// 가짜 고리 다섯 — 굽기 컬링 대조용. 상자가 곧 정답표다.
+// 3번은 1번(큰 것) 안의 구멍 흉내: 상자가 안에 있으니 함께 뽑혀야 한다.
+let LAND_RINGS=[
+  { p:{__ring:0}, x0:1900, y0:1300, x1:2600, y1:1800 },
+  { p:{__ring:1}, x0:1000, y0:1000, x1:5000, y1:2600 },
+  { p:{__ring:2}, x0:7900, y0:1900, x1:8190, y1:2100 },
+  { p:{__ring:3}, x0:2900, y0:1900, x1:3100, y1:2050 },
+  { p:{__ring:4}, x0:100,  y0:3800, x1:300,  y1:3950 }
+];
+globalThis.__RINGS = LAND_RINGS;      // 시험이 정답표로 쓴다 (null 로 갈아 끼워도 원본 유지)
+class Path2D{ constructor(){ this.parts=[]; } addPath(p){ this.parts.push(p); } }
 const ship={ x:2100, y:1500, head:0, grounded:false };
 let zoom=0.42, W=1920, H=1080;
 const show={ mini:true };
@@ -210,7 +221,30 @@ MINI.setStep(1); ship.x = 2100; ship.y = 1500; MINI.doBake();
 chk('바다·해도밖을 칠했다', tally.fillRect >= 2, tally.fillRect + '회');
 chk('육지를 채웠다', tally.fill >= 1, tally.fill + '회');
 chk('해안선·경위선을 그었다', tally.stroke >= 2, tally.stroke + '회');
-chk('본편과 같은 landPath 를 썼다', tally.paths.some(p => p && p.__isPath));
+// 굽기 컬링 (2026.07.26): 통짜 landPath 를 사본마다 긋던 것이 이동 중 순간 멈춤의
+// 원인이라, 조각과 겹치는 고리만 landFor 로 모아 굽는다. 전수 목록과 대조한다.
+chk('조각과 겹치는 고리만 구웠다 (전수 대조)  ★끊김 재발 방지', (() => {
+  const br = MINI.bakeRect();
+  const want = sandbox.__RINGS.filter(r =>
+    !(r.x1 < br.x || r.x0 > br.x + br.w || r.y1 < br.y || r.y0 > br.y + br.h)).map(r => r.p);
+  const got = tally.paths.find(p => p && p.parts);
+  return got && got.parts.length === want.length && want.every(w => got.parts.includes(w));
+})());
+chk('구멍 흉내(큰 고리 안 상자)가 바깥과 함께 뽑혔다', (() => {
+  const got = tally.paths.find(p => p && p.parts);
+  const inHole = got && got.parts.some(p => p.__ring === 3);
+  const outer  = got && got.parts.some(p => p.__ring === 1);
+  return !inHole || outer;      // 구멍이 뽑혔다면 바깥도 반드시 있어야 한다
+})());
+chk('통짜 landPath 는 더 이상 긋지 않는다', !tally.paths.some(p => p && p.__isPath));
+chk('LAND_RINGS 가 없으면 통짜로 후퇴한다', (() => {
+  vm.runInContext('globalThis.__save = LAND_RINGS; LAND_RINGS = null;', sandbox);
+  tally.paths.length = 0; MINI.doBake();
+  const usedWhole = tally.paths.some(p => p && p.__isPath);
+  vm.runInContext('LAND_RINGS = globalThis.__save;', sandbox);
+  MINI.doBake();
+  return usedWhole;
+})());
 
 console.log('\n=== 9. 여닫기 · 축척 넘기기 ===');
 chk('처음에는 켜져 있다', MINI.on === true);

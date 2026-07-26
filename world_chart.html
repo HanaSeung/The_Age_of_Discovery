@@ -587,6 +587,9 @@ function moveWithCoast(x, y, dx, dy, out){
 // 이웃 번호 선분은 끝점을 공유한다 — 이어지는 것은 lineTo 로 붙여 폴리라인을 만든다.
 // 그래야 반투명 음영이 이음마다 덧칠되지 않고 round join 이 제대로 든다.
 const SEG_STROKE_MAX = 150000;   // 보이는 선분이 이보다 많으면 null — 통짜 stroke 로 후퇴 (저배율)
+const SEG_STROKE_CELLS = 60000;  // 화면이 걸친 격자 칸이 이보다 많으면 모으기 전에 즉시 통짜
+                                 //   — 버릴 것을 다 모아 놓고 버리는 헛수고(세계 전체 화면 1fps 사고,
+                                 //     52만 칸 x 사본 3장 순회)를 문 앞에서 돌려세운다
 let segStamp = null, segGen = 0; // 중복 제거 도장 (선분 하나가 여러 칸에 걸친다)
 function coastStrokePath(k){
   if(!cellStart || !COASTSEG) return null;
@@ -599,6 +602,8 @@ function coastStrokePath(k){
   if(gy0<0) gy0=0; else if(gy0>CGH-1) gy0=CGH-1;      // 색인과 같은 방식으로 양끝을 자른다
   if(gy1<0) gy1=0; else if(gy1>CGH-1) gy1=CGH-1;
   const gx0=Math.floor(vx0/COL_CELL), gx1=Math.floor(vx1/COL_CELL);
+  const spanX = Math.min(gx1-gx0+1, CGW);             // 세계보다 넓게 보이면 한 바퀴로 접는다
+  if(spanX*(gy1-gy0+1) > SEG_STROKE_CELLS) return null;  // 돌기 전에 포기 — 여기가 요점
   const ids=[];
   for(let gy=gy0;gy<=gy1;gy++){
     const row=gy*CGW;
@@ -1810,6 +1815,17 @@ const MINI = (function(){
     return { x: shipXin()-w/2, y: ship.y-h/2, w, h };
   }
   function bakeRect(){ return { x:bx, y:by, w:bw, h:bh }; }
+  // 조각과 겹치는 고리만 모은다 — 굽기가 통짜 41만 점을 사본마다 fill+stroke 하던 것이
+  // 이동 중 순간 멈춤(2026.07.26, 100fps 에서 굽는 프레임만 수십 ms 튐)의 원인이었다.
+  // 본지도 landCull 과 같은 원리·같은 자료(LAND_RINGS). 구멍 상자는 바깥 상자 안에
+  // 있으므로 함께 뽑혀 짝홀이 지켜진다. LAND_RINGS 가 없으면 통짜로 후퇴한다.
+  function landFor(x0, y0, x1, y1){
+    if(typeof LAND_RINGS === 'undefined' || !LAND_RINGS) return landPath;
+    const p = new Path2D();
+    for(const r of LAND_RINGS)
+      if(!(r.x1 < x0 || r.x0 > x1 || r.y1 < y0 || r.y0 > y1)) p.addPath(r.p);
+    return p;
+  }
   // 배의 x 는 wrapX 로 [0,WORLD_W) 안에 갇혀 있고 구운 조각은 절대좌표다. 이음매를
   // 넘는 순간 둘이 월드 폭만큼 어긋나므로, 조각 쪽으로 옮겨 온 값을 쓴다.
   function shipXin(){
@@ -1850,8 +1866,9 @@ const MINI = (function(){
       for(let lat=-90;  lat<=90;  lat+=dg){ const y=(90-lat)*DEG2PXY; bctx.moveTo(0,y); bctx.lineTo(WORLD_W,y); }
       bctx.stroke();
       bctx.lineJoin='round';
-      bctx.fillStyle = LAND_C; bctx.fill(landPath,'evenodd');
-      bctx.strokeStyle = COAST; bctx.lineWidth = 1.2/k; bctx.stroke(landPath);
+      const lp = landFor(bx - c*WORLD_W, by, bx + bw - c*WORLD_W, by + bh);   // 이 사본이 담는 고리만
+      bctx.fillStyle = LAND_C; bctx.fill(lp,'evenodd');
+      bctx.strokeStyle = COAST; bctx.lineWidth = 1.2/k; bctx.stroke(lp);
     }
     bctx.setTransform(1,0,0,1,0,0);
   }
@@ -1934,7 +1951,7 @@ const MINI = (function(){
   apply();
   if(typeof updateHint === 'function') updateHint();
 
-  return { draw, toggle, cycle, setStep, need, doBake, viewRect, bakeRect, spanPx, barKm,
+  return { draw, toggle, cycle, setStep, need, doBake, viewRect, bakeRect, spanPx, barKm, landFor,
            get on(){ return on; }, get step(){ return step; },
            SPAN_KM, GRAT_DEG, OVER, REBAKE, VIEW_MIN, MW, MH };
 })();

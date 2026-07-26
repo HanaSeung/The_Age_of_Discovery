@@ -183,6 +183,12 @@ chk('loop 이 GLL.frame 을 오프셋 앞에서 한 번 부른다',
 chk('바다·수심·격자가 아래층(bctx)으로 갔다',
     /bctx\.fillStyle = DEPTH_COL\[0\]/.test(src) && /drawRhumb\(bctx\)/.test(src) && /drawGraticule\(bctx\)/.test(src));
 chk('SEG_STROKE_MAX 가 이름 있는 상수다', /const SEG_STROKE_MAX\s*=\s*\d+/.test(src));
+const segFn = slice('function coastStrokePath', '\n}', 'stroke 함수 본문');
+chk('칸 순회 전에 즉시 포기한다 (세계 전체 1fps 사고 재발 방지)  ★핵심',
+    /const SEG_STROKE_CELLS\s*=\s*\d+/.test(src) &&
+    segFn.indexOf('SEG_STROKE_CELLS') > 0 &&
+    segFn.indexOf('SEG_STROKE_CELLS') < segFn.indexOf('for(let gy'),
+    '포기가 순회보다 앞에 있어야 한다');
 chk('카메라 상대 좌표 셰이더다 (정밀도)', /aP\.x \+ uOff - uCam\.x/.test(src));
 chk('SOURCES_LICENSE 에 earcut 이 있다',
     /earcut/.test(fs.readFileSync(path.join(DIR,'SOURCES_LICENSE.md'),'utf8')));

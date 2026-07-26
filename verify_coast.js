@@ -12,6 +12,18 @@ let pass = 0, fail = 0;
 const chk = (n, c, note) => { c ? (pass++, console.log('  OK   ' + n + (note ? '  ' + note : '')))
                                 : (fail++, console.log('  FAIL ' + n + (note ? '  ' + note : ''))); };
 
+// ---- 고정 seed 난수 (mulberry32) ----
+// Math.random 을 그대로 쓰면 같은 코드가 실행마다 23/0 <-> 22/1 로 뒤집혀
+// (2026.07.26 확인) 전체 회귀의 신호를 죽인다. 표본은 무작위이되 재현 가능해야 한다.
+// 실패가 나면 매번 같은 표본에서 나므로 곧장 파고들 수 있다.
+const SEED = 20260726;
+const rnd = (s => () => {
+  s |= 0; s = (s + 0x6D2B79F5) | 0;
+  let t = Math.imul(s ^ (s >>> 15), 1 | s);
+  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+})(SEED);
+
 // ---- 원본에서 필요한 토막만 오려 낸다 ----
 function slice(a, b, what){
   const i = src.indexOf(a), j = src.indexOf(b, i);
@@ -20,8 +32,11 @@ function slice(a, b, what){
 }
 const partConst = slice('// ===== 좌표계 / 월드 상수 =====',
                         '// ===== 수심 밴드', '월드 상수');
-const partCoast = slice('// ===== 육지 폴리곤 → 단일 Path2D',
+const partCoast = slice('// ===== 육지 폴리곤',
                         '// ===== 해류 필드', '해안선/색인');
+// 주의: 절 제목의 뒷부분('단일/고리별 Path2D')은 구현이 바뀌며 함께 바뀐다.
+// 2026.07.26 '단일→고리별' 개명에 표식이 깨져 커밋 후 이 검증이 통째로 죽어 있었다.
+// 앞머리만 문지방으로 삼는다 (변수명 변화에 취약하지 않게 — 부록 C 원칙).
 
 // ---- 껍데기 환경 ----
 const fakeCtx = {
@@ -31,7 +46,7 @@ const fakeCtx = {
 const sandbox = {
   console: { log(){}, warn(){}, error(m){ throw new Error(m); } },
   Math, Uint8Array, Uint32Array, Int8Array, Float32Array, DataView, Infinity, NaN,
-  Path2D: class { moveTo(){} lineTo(){} closePath(){} },
+  Path2D: class { moveTo(){} lineTo(){} closePath(){} addPath(){} },   // addPath: 고리별 경로를 통짜에 담을 때
   document: { createElement(){ return { getContext(){ return fakeCtx; } }; } },
   atob: s => Buffer.from(s, 'base64').toString('binary'),
   window: {}
@@ -95,9 +110,9 @@ const out = {d:0,tx:0,ty:0};
 let worst = 0, n2 = 0;
 for(let t=0;t<600;t++){
   // 해안 정점 근처를 골라 표본한다 (먼바다는 둘 다 Infinity 라 뜻이 없다)
-  const i = (Math.random()*nSeg)|0;
-  const x = COASTSEG[i*4] + (Math.random()-0.5)*6;
-  const y = COASTSEG[i*4+1] + (Math.random()-0.5)*6;
+  const i = (rnd()*nSeg)|0;
+  const x = COASTSEG[i*4] + (rnd()-0.5)*6;
+  const y = COASTSEG[i*4+1] + (rnd()-0.5)*6;
   if(y<0||y>=WORLD_H) continue;
   const R = 8;
   nearestCoast(x, y, R, out);
@@ -131,7 +146,7 @@ const M = {x:0,y:0,hit:false,stop:false};
 function sail(x, y, head, steps, stepLen){
   let bad = 0, hits = 0;
   for(let s=0;s<steps;s++){
-    head += (Math.random()-0.5)*0.25;                  // 조금씩 침로를 흔든다
+    head += (rnd()-0.5)*0.25;                  // 조금씩 침로를 흔든다
     moveWithCoast(x, y, Math.cos(head)*stepLen, Math.sin(head)*stepLen, M);
     x = wrapX(M.x); y = M.y;
     if(M.hit) hits++;
@@ -142,12 +157,12 @@ function sail(x, y, head, steps, stepLen){
 // 시작점: 바다인 곳만 고른다
 const starts = [];
 while(starts.length < 120){
-  const x = Math.random()*WORLD_W, y = 200 + Math.random()*(WORLD_H-400);
+  const x = rnd()*WORLD_W, y = 200 + rnd()*(WORLD_H-400);
   if(!inLand(x,y)) starts.push([x,y]);
 }
 let totBad = 0, totHit = 0;
 for(const [x,y] of starts){
-  const r = sail(x, y, Math.random()*Math.PI*2, 400, 0.30);   // 기본 시계 한 걸음 = 0.30px
+  const r = sail(x, y, rnd()*Math.PI*2, 400, 0.30);   // 기본 시계 한 걸음 = 0.30px
   totBad += r.bad; totHit += r.hits;
 }
 chk('기본 시계 48,000걸음 관통 없음', totBad === 0, `해안 접촉 ${totHit}회, 관통 ${totBad}회`);
@@ -155,7 +170,7 @@ chk('기본 시계 48,000걸음 관통 없음', totBad === 0, `해안 접촉 ${t
 // 시계를 최대로 올린 경우 — 한 걸음이 훨씬 커진다
 let fastBad = 0, fastHit = 0;
 for(const [x,y] of starts){
-  const r = sail(x, y, Math.random()*Math.PI*2, 400, 3.60);   // hoursPerSec 24 상당
+  const r = sail(x, y, rnd()*Math.PI*2, 400, 3.60);   // hoursPerSec 24 상당
   fastBad += r.bad; fastHit += r.hits;
 }
 chk('빠른 시계 48,000걸음 관통 없음', fastBad === 0, `해안 접촉 ${fastHit}회, 관통 ${fastBad}회`);
@@ -210,9 +225,9 @@ console.log('\n=== 5. 옛 마스크가 막던 바다가 열렸는가 (이번 문
 const D0 = {d:0,tx:0,ty:0};
 const freed = [];
 for(let t=0;t<300000 && freed.length<300;t++){
-  const i = (Math.random()*nSeg)|0;
-  const x = COASTSEG[i*4] + (Math.random()-0.5)*4;
-  const y = COASTSEG[i*4+1] + (Math.random()-0.5)*4;
+  const i = (rnd()*nSeg)|0;
+  const x = COASTSEG[i*4] + (rnd()-0.5)*4;
+  const y = COASTSEG[i*4+1] + (rnd()-0.5)*4;
   if(y<1 || y>=WORLD_H-1) continue;
   if(inLand(x,y)) continue;                    // 진짜 바다여야 한다
   nearestCoast(x, y, 2, D0);
@@ -225,7 +240,7 @@ chk('그런 자리가 실제로 있다', freed.length > 50, freed.length + '곳'
 // 그 자리에서 배가 움직이는가 (옛 방식이면 그 자리에서 좌초였다)
 let moveOk = 0;
 for(const [x,y] of freed){
-  const h = Math.random()*Math.PI*2;
+  const h = rnd()*Math.PI*2;
   moveWithCoast(x, y, Math.cos(h)*0.02, Math.sin(h)*0.02, M);
   if(!M.stop && Math.hypot(M.x-x, M.y-y) > 0.01) moveOk++;
 }
@@ -235,7 +250,7 @@ console.log('\n=== 6. 해안에서 미끄러지는가 (완전 정지가 아님) 
 // 해안선 선분 하나를 골라 그 바깥에서 육지 쪽으로 비스듬히 밀어 본다
 let slid = 0, tries = 0;
 for(let t=0;t<400;t++){
-  const i = (Math.random()*nSeg)|0;
+  const i = (rnd()*nSeg)|0;
   const ax=COASTSEG[i*4], ay=COASTSEG[i*4+1], bx=COASTSEG[i*4+2], by=COASTSEG[i*4+3];
   const vx=bx-ax, vy=by-ay, L=Math.hypot(vx,vy); if(L<0.5) continue;
   const mx=(ax+bx)/2, my=(ay+by)/2;
@@ -256,7 +271,7 @@ chk('비스듬히 받으면 미끄러진다', slid > tries*0.9, `${slid}/${tries
 console.log('\n=== 7. 정면으로 받으면 멈춘다 ===');
 let stopped = 0, st = 0;
 for(let t=0;t<300;t++){
-  const i = (Math.random()*nSeg)|0;
+  const i = (rnd()*nSeg)|0;
   const ax=COASTSEG[i*4], ay=COASTSEG[i*4+1], bx=COASTSEG[i*4+2], by=COASTSEG[i*4+3];
   const vx=bx-ax, vy=by-ay, L=Math.hypot(vx,vy); if(L<0.5) continue;
   const mx=(ax+bx)/2, my=(ay+by)/2, nx=-vy/L, ny=vx/L;
@@ -277,7 +292,7 @@ console.log('\n=== 8. 해안에 붙어도 바다 쪽으로 돌리면 빠져나�
 const E = {d:0,nx:0,ny:0};
 let escaped = 0, et = 0, headOn = 0;
 for(let t=0;t<400;t++){
-  const i = (Math.random()*nSeg)|0;
+  const i = (rnd()*nSeg)|0;
   const ax=COASTSEG[i*4], ay=COASTSEG[i*4+1], bx=COASTSEG[i*4+2], by=COASTSEG[i*4+3];
   const vx=bx-ax, vy=by-ay, L=Math.hypot(vx,vy); if(L<0.5) continue;
   const mx=(ax+bx)/2, my=(ay+by)/2, nx=-vy/L, ny=vx/L;
@@ -318,7 +333,7 @@ chk('비스듬히 돌리면 해안에서 멀어진다', escaped > et*0.9, `${esc
 // 그 방향이 더는 바다 쪽이 아니게 되어, 충돌이 아니라 시험이 틀리게 된다.
 let cornerOut = 0, ct = 0;
 for(let t=0;t<400;t++){
-  const i = (Math.random()*nSeg)|0;
+  const i = (rnd()*nSeg)|0;
   const ax=COASTSEG[i*4], ay=COASTSEG[i*4+1], bx=COASTSEG[i*4+2], by=COASTSEG[i*4+3];
   const vx=bx-ax, vy=by-ay, L=Math.hypot(vx,vy); if(L<0.5) continue;
   const nx=-vy/L, ny=vx/L;
