@@ -21,8 +21,11 @@ const mZmax = grab(/const ZMAX=(\d+)/, 'ZMAX');
 const mLim = grab(/const ZDATA_LIMIT=(\d+)/, 'ZDATA_LIMIT');
 const ZMAX = mZmax ? +mZmax[1] : 0;
 const ZDATA_LIMIT = mLim ? +mLim[1] : 0;
-chk('ZMAX = 100', ZMAX === 100, '(원래 13)');
-chk('ZDATA_LIMIT = 13', ZDATA_LIMIT === 13);
+chk('ZMAX = 100', ZMAX === 100, '기준 배율 (2026.07 확정)');
+// 10m 해안선 + 델타 형식으로 좌표 정밀도가 0.111km 가 되어 한계 배율이 132 로 올라갔다.
+// 기준 배율(100)보다 위여야 평상시 항해에서 자료가 화면을 따라온다.
+chk('ZDATA_LIMIT = 132', ZDATA_LIMIT === 132, '(50m 시절 13)');
+chk('자료 한계가 기준 배율보다 위다', ZDATA_LIMIT > ZMAX, `${ZDATA_LIMIT} > ${ZMAX}`);
 
 console.log('\n=== 2. 파라미터 객체 ===');
 const KEYS = ['speedKn','hoursPerSec','turnDeg','accUp','accDn',
