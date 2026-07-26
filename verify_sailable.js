@@ -1,14 +1,20 @@
 // verify_sailable.js — 새 기본값으로 '실제로 항해가 되는지' 검증
 // 실행: node verify_sailable.js
+//
+// [2026.07.27 개정] polar() 이 SHIP.spec.nogoDeg 를 보게 바뀌었는데 P 만 넘겨 주어
+// 첫 호출에서 터지고 있었다. 제원·세계값을 _specsrc.js 로 원본에서 뽑아 쓴다 —
+// 값을 베껴 두면 원본이 바뀌어도 아무도 모르기 때문이다.
 "use strict";
 const fs = require('fs'), path = require('path');
-const src = fs.readFileSync(path.join(__dirname, 'world_chart.html'), 'utf8');
+const S = require('./_specsrc.js');
+const src = S.read();
 
-// world_chart.html 의 P 기본값을 그대로 읽어온다 (문서와 코드가 어긋나지 않게)
-const pbody = src.match(/const P = \{[\s\S]*?\n\};/)[0];
-const P = new Function(pbody.replace('const P =', 'return ') .replace(/;\s*$/, ''))();
-const polar = new Function('P', src.match(/function polar\(deg\)\{[\s\S]*?\n\}/)[0] + '; return polar;')(P);
-const windPower = new Function('P', src.match(/function windPower\(ms\)\{[\s\S]*?\n\}/)[0] + '; return windPower;')(P);
+// 제원과 세계값을 원본에서 그대로 읽어온다 (문서와 코드가 어긋나지 않게)
+const SPEC = S.shipSpec(src);
+const P = S.worldP(src);
+const SHIP = { spec: SPEC };
+const polar = S.lift(src, 'polar', SHIP, P);
+const windPower = S.lift(src, 'windPower', SHIP, P);
 
 let pass = 0, fail = 0;
 const chk = (n, c, note) => { c ? (pass++, console.log('  OK   ' + n + (note ? '  ' + note : '')))
@@ -39,7 +45,7 @@ function best(m, lat, lon) {            // 360도 훑어 최고 효율과 항해
   return { ms, bestE, okPct: okCount / 72 * 100 };
 }
 console.log('\n=== 기본값 확인 ===');
-console.log(`  windGain ${P.windGain} / windMin ${P.windMin} / windFull ${P.windFull} / nogo ${P.nogoDeg}도`);
+console.log(`  windGain ${P.windGain} / windMin ${P.windMin} / windFull ${P.windFull} / nogo ${SPEC.nogoDeg}도`);
 
 console.log('\n=== 1. 게임 시작 지점 (31N 24W) — 12개월 전부 ===');
 const MN = ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월'];
@@ -93,7 +99,15 @@ chk('옛 단일 돛 제거', !/const hh = 7\.0\*s\*set/.test(src));
 console.log('\n=== 5. 기타 ===');
 chk('windGain 이 물리에 적용', /windVec\.x \*= P\.windGain/.test(src));
 chk('windGain 이 화살표에도 적용', /Math\.hypot\(v\.x, v\.y\) \* P\.windGain/.test(src));
-chk('저장 키 갱신 (옛 값 무효화)', /'aod_tune_v2'/.test(src));
+// 저장 키는 파라미터 구성이 바뀔 때마다 올라간다(v2 → v4 …). 특정 판을 못박으면
+// 올릴 때마다 여기가 깨지므로, '판이 붙어 있는가'와 '옛 판이 남지 않았는가'만 본다.
+// 지금 몇 판인지는 verify_compass 가 따로 지킨다.
+const lsKey = (src.match(/const LS = '(aod_tune_v(\d+))'/) || []);
+chk('저장 키에 판 번호가 붙어 있다', !!lsKey[1], lsKey[1] || '못 찾음');
+chk('옛 판 키가 남아 있지 않다', !!lsKey[2] &&
+    !Array.from({length: +lsKey[2] - 1}, (_, i) => 'aod_tune_v' + (i + 1))
+      .some(k => src.includes(k)),
+    lsKey[2] ? `v1 ~ v${+lsKey[2] - 1} 잔재 없음` : '');
 chk('windGain 슬라이더', /\['windGain'/.test(src));
 try { new Function(src.split('<script>').pop().split('</script>')[0]); chk('script 파싱', true); }
 catch (e) { chk('script 파싱', false, e.message); }

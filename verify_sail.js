@@ -1,7 +1,12 @@
 // verify_sail.js — 돛의 배치·펴는 순서·크기 검증
+//
+// [2026.07.27 개정] 153줄이 'const SPEC = [' 를 찾다가 null 에서 터져 파일 전체가
+// 멎어 있었다. 손잡이 표가 SHIP_SPEC / WORLD_SPEC 둘로 갈리며 대괄호가 사라졌기
+// 때문이다. 표를 뽑는 일은 _specsrc.js 에 맡긴다 — 또 갈려도 거기만 고치면 된다.
 "use strict";
 const fs = require('fs'), path = require('path');
-const src = fs.readFileSync(path.join(__dirname, 'world_chart.html'), 'utf8');
+const S = require('./_specsrc.js');
+const src = S.read();
 let pass = 0, fail = 0;
 const chk = (n, c, note) => { c ? (pass++, console.log('  OK   ' + n + (note ? '  ' + note : '')))
                                 : (fail++, console.log('  FAIL ' + n + (note ? '  ' + note : ''))); };
@@ -150,16 +155,27 @@ try { new Function(src.split('<script>').pop().split('</script>')[0]); chk('scri
 catch (e) { chk('script 파싱', false, e.message); }
 
 console.log('\n=== 9. 패널 슬라이더 범위 ===');
-const spec = src.match(/const SPEC = \[[\s\S]*?\n  \];/)[0];
+// 배 능력치는 's:' 접두어가 붙는다 (P 에서 SHIP 으로 옮기며 생긴 규칙).
+const spec = S.specTable(src);
 function range(key) {
-  const m = spec.match(new RegExp("\\['" + key + "',\\s*'[^']*',\\s*([\\d.]+),\\s*([\\d.]+)"));
+  const m = spec.match(new RegExp("\\['s:" + key + "',\\s*'[^']*',\\s*([\\d.]+),\\s*([\\d.]+)"));
   return m ? { lo: +m[1], hi: +m[2] } : null;
 }
 const rSpeed = range('speedKn'), rSail = range('sailMax');
+chk('추진력 손잡이를 찾았다', !!rSpeed);
+chk('돛 단수 손잡이를 찾았다', !!rSail);
 console.log(`   전속    ${rSpeed.lo} ~ ${rSpeed.hi} kn`);
 console.log(`   돛 단수 ${rSail.lo} ~ ${rSail.hi} 단`);
-chk('전속 상한 20kn', rSpeed.hi === 20, `${rSpeed.lo}~${rSpeed.hi}`);
+chk('전속 상한 30kn', rSpeed.hi === 30, `${rSpeed.lo}~${rSpeed.hi}`);
 chk('돛 단수 1~6단', rSail.lo === 1 && rSail.hi === 6, `${rSail.lo}~${rSail.hi}`);
+// 제원의 실제 값이 손잡이 범위 안에 있어야 한다 — 밖이면 슬라이더로 되돌릴 수 없다
+const SPEC0 = S.shipSpec(src);
+chk('제원 추진력이 손잡이 범위 안이다',
+    SPEC0.speedKn >= rSpeed.lo && SPEC0.speedKn <= rSpeed.hi,
+    `${SPEC0.speedKn}kn ∈ [${rSpeed.lo}, ${rSpeed.hi}]`);
+chk('제원 돛 단수가 손잡이 범위 안이다',
+    SPEC0.sailMax >= rSail.lo && SPEC0.sailMax <= rSail.hi,
+    `${SPEC0.sailMax}단 ∈ [${rSail.lo}, ${rSail.hi}]`);
 
 console.log('\n=== 10. 1단 배가 정상인지 ===');
 const one = geom(1, 1, 1);

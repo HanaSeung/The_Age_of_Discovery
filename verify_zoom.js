@@ -1,9 +1,17 @@
 // verify_zoom.js — 배율 확장 + 조정 패널 검증
 // 실행: node verify_zoom.js
+//
+// [2026.07.27 개정] 네 검사가 낡아 있었다.
+//   · P.boost — 일부러 걷어낸 값을 아직 있어야 한다고 찾고 있었다
+//   · 배 x/y 이동 — 벡터 해안 충돌이 들어오며 nx/ny 대입이 mdx/mdy 변위로 바뀌었다
+//   · 슬라이더 스펙 배열 — 표가 SHIP_SPEC/WORLD_SPEC 로 갈리며 대괄호가 사라졌다
+// 아울러 §2 의 목록이 배 값과 세계값을 섞은 채 전부 'P.○○' 로 부르고 있어,
+// 이름표와 실제가 어긋난 상태로 통과하고 있었다.
 "use strict";
 const fs = require('fs');
 const path = require('path');
-const src = fs.readFileSync(path.join(__dirname, 'world_chart.html'), 'utf8');
+const S = require('./_specsrc.js');
+const src = S.read();
 
 let pass = 0, fail = 0;
 function chk(name, cond, note) {
@@ -28,9 +36,20 @@ chk('ZDATA_LIMIT = 132', ZDATA_LIMIT === 132, '(50m 시절 13)');
 chk('자료 한계가 기준 배율보다 위다', ZDATA_LIMIT > ZMAX, `${ZDATA_LIMIT} > ${ZMAX}`);
 
 console.log('\n=== 2. 파라미터 객체 ===');
-const KEYS = ['speedKn','hoursPerSec','turnDeg','accUp','accDn',
-              'turnIdle','boost','sailMax','shipScale','curGain'];
-for (const k of KEYS) chk('P.' + k, new RegExp(k + '\\s*:').test(src));
+// 배 능력치는 P 에서 SHIP.spec 으로 떠났다 (2026.07.26). 옛 목록은 둘을 섞어 두고
+// 전부 'P.○○' 라는 이름표를 달아, SHIPS 쪽 글자에 얻어걸려 통과하고 있었다.
+// 이제 각자 제자리에 있는지를 본다.
+const SPEC = S.shipSpec(src);
+const P = S.worldP(src);
+for (const k of ['speedKn','sailMax','turnDeg','turnIdle','accUp','accDn'])
+  chk('SHIP.spec.' + k, k in SPEC, String(SPEC[k]));
+for (const k of ['hoursPerSec','shipScale','curGain'])
+  chk('P.' + k, k in P, String(P[k]));
+// 배 값이 P 로 되돌아가지 않는가 (되돌아가면 두 곳에서 갈라진다)
+for (const k of ['speedKn','turnDeg','sailMax'])
+  chk('P 에 ' + k + ' 가 없다', !(k in P));
+// Shift 순풍은 바람 구현으로 폐기됐다 — 남아 있으면 그것이 오류다
+chk('죽은 boost 가 없다', !('boost' in P) && !/P\.boost/.test(src));
 chk('P0 초기값 보존', /const P0 = Object\.assign\(\{\}, P\)/.test(src));
 chk('syncDerived 정의', /function syncDerived\(\)/.test(src));
 chk('파생값 let 선언', /let SPEED, SAIL_MAX, ACC_UP, ACC_DN, TURN_FULL, TURN_IDLE, TIMEK/.test(src));
@@ -47,8 +66,12 @@ chk('CURVIZ 가 전역 P.curGain 참조', /P\.curGain/.test(curvizBody));
 console.log('\n=== 4. 시계(TIMEK) 적용 지점 ===');
 chk('TIMEK 정의 = hoursPerSec/24', /TIMEK\s*=\s*P\.hoursPerSec \/ 24/.test(src));
 chk('배 이동에 gdt 적용', /const gdt = dt \* TIMEK;/.test(src));
-chk('배 x 이동', /let nx = ship\.x \+ \(ship\.vx \+ curVec\.x\)\*gdt/.test(src));
-chk('배 y 이동', /let ny = ship\.y \+ \(ship\.vy \+ curVec\.y\)\*gdt/.test(src));
+// 벡터 해안 충돌(2026.07.26)이 들어오며 이동이 '새 좌표 대입'에서 '변위 계산 →
+// moveWithCoast 가 미끄러뜨림'으로 바뀌었다. 옛 nx/ny 를 찾던 검사는 그때부터
+// 죽어 있었다. 확인할 것은 변수 이름이 아니라 '속도와 해류가 함께 gdt 를 탄다'는 것이다.
+chk('배 x 이동에 gdt 적용', /let mdx = \(ship\.vx \+ curVec\.x\)\*gdt/.test(src));
+chk('배 y 이동에 gdt 적용', /let mdy = \(ship\.vy \+ curVec\.y\)\*gdt/.test(src));
+chk('변위를 해안 충돌에 넘긴다', /moveWithCoast\(ship\.x, ship\.y, mdx, mdy, MOVE\)/.test(src));
 chk('해류 파티클에도 적용', /const gdt = dt\*TIMEK\*P\.curGain/.test(src));
 chk('가속은 실시간 유지(dt)', /ship\.speed \+ ACC_UP\*dt/.test(src));
 chk('선회도 실시간 유지(dt)', /TURN_FULL \* rf \* dt/.test(src));
@@ -64,7 +87,12 @@ chk('안내문에 P 표기', /<kbd>P<\/kbd> 조정패널/.test(src));
 
 console.log('\n=== 6. 패널 기능 ===');
 chk('패널 DOM 존재', /<div id="tune"><\/div>/.test(src));
-chk('슬라이더 스펙 배열', /const SPEC = \[/.test(src));
+// 표는 SHIP_SPEC / WORLD_SPEC 둘로 갈려 있고 SPEC 은 concat 으로 합쳐진다.
+// 'const SPEC = [' 를 찾던 옛 검사는 그 순간부터 죽어 있었다.
+const table = S.specTable(src);
+chk('슬라이더 스펙 표', table.length > 0 && /\['s:speedKn'/.test(table) && /\['hoursPerSec'/.test(table),
+    '배 · 세계 두 표를 합쳐 읽는다');
+chk('두 표를 SPEC 으로 합친다', /const SPEC = SHIP_SPEC\.concat\(WORLD_SPEC\)/.test(src));
 chk('자동 저장(localStorage)', /localStorage\.setItem\(LS/.test(src));
 chk('복원(load)', /localStorage\.getItem\(LS\)/.test(src));
 chk('값 복사 버튼', /id="tCopy"/.test(src) && /navigator\.clipboard/.test(src));

@@ -1,8 +1,17 @@
 // verify_windsail.js — 바람 통합 및 돛 물리 검증
 // 실행: node verify_windsail.js
+//
+// [2026.07.27 전면 개정] 이 파일은 세 겹으로 썩어 있었다.
+//   1. polar() 이 SHIP.spec 을 보게 바뀌었는데 P 만 넘겨 주어 첫 호출에서 터졌다
+//   2. windMin/windFull 을 제 안에 베껴 두었다 — 그것도 실제와 다른 값(1.5/10, 실제 0.5/9)으로.
+//      즉 없는 세계를 검사하며 통과하고 있었다. 검증이 거짓말을 하고 있던 셈이다
+//   3. 걷어낸 HUD 판의 글자를 아직 찾고 있었다
+// 이제 제원·세계값·손잡이표를 모두 _specsrc.js 로 원본에서 뽑아 쓴다.
+// 뽑는 자리가 사라지면 그 자체로 실패하므로, 값이 어긋난 채 통과할 방법이 없다.
 "use strict";
 const fs = require('fs'), path = require('path');
-const src = fs.readFileSync(path.join(__dirname, 'world_chart.html'), 'utf8');
+const S = require('./_specsrc.js');
+const src = S.read();
 let pass = 0, fail = 0;
 function chk(n, c, note) {
   if (c) { pass++; console.log('  OK   ' + n + (note ? '  ' + note : '')); }
@@ -35,43 +44,61 @@ chk('원형 계기 — 해류 바늘', /Math\.atan2\(curVec\.y, curVec\.x\)/.tes
 chk('바람 화살표', /function drawWindArrows\(\)/.test(src));
 chk('B 키 토글', /if\(k==='b'\) show\.wind=!show\.wind/.test(src));
 chk('그리기 순서에 포함', /CURVIZ\.draw\(\);\s*\n\s*drawWindArrows\(\);/.test(src));
-chk('HUD 날짜 표시', /항해 '\+Math\.floor\(gameDay\)\+'일차/.test(src));
-chk('HUD 바람 표시', /windTxt\+'<br>'/.test(src));
+// 옛 좌상단 HUD 판은 걷어냈다. 날짜는 위쪽 띠(verify_ship §5-3)가, 바람은
+// 원형 계기(verify_compass §8)가 맡는다. verify_ui 의 '옛 HUD 판의 잔재가 없다'와
+// 같은 방식으로 뒤집어 둔다 — 저쪽은 판을, 여기는 거기 찍히던 글자를 지킨다.
+chk('HUD 날짜 글자의 잔재가 없다', !/항해 '\+Math\.floor\(gameDay\)\+'일차/.test(src));
+chk('HUD 바람 글자의 잔재가 없다', !/windTxt\+'<br>'/.test(src));
 
 console.log('\n=== 4. 패널 ===');
-for (const k of ['nogoDeg', 'windMin', 'windFull'])
-  chk('슬라이더 ' + k, new RegExp("\\['" + k + "'").test(src));
-chk('복사에 바람 값 포함', /nogoDeg    : '\+P\.nogoDeg/.test(src));
+// 배 능력치는 's:' 접두어가 붙는다 (P 에서 SHIP 으로 옮기며 생긴 규칙).
+// 접두어 없이 찾던 옛 검사는 손잡이가 멀쩡히 있는데도 못 찾고 있었다.
+const table = S.specTable(src);
+for (const k of ['s:nogoDeg', 'windMin', 'windFull'])
+  chk('슬라이더 ' + k, new RegExp("\\['" + k.replace(':', ':') + "'").test(table));
+chk('복사에 바람 값이 든다',
+    /'windMin    : '\+P\.windMin/.test(src) && /'windFull   : '\+P\.windFull/.test(src));
+chk('복사에 역풍 사각이 든다 — 이제 배 제원 쪽이다',
+    /nogoDeg:'\+sp\.nogoDeg/.test(src));
 
 console.log('\n=== 5. 문법 ===');
 try { new Function(src.split('<script>').pop().split('</script>')[0]); chk('script 파싱', true); }
 catch (e) { chk('script 파싱', false, '→ ' + e.message); }
 
-console.log('\n=== 6. 극곡선 동작 (HTML에서 추출해 실제 실행) ===');
-const P = { nogoDeg: 45, windMin: 1.5, windFull: 10 };
-const polarSrc = src.match(/function polar\(deg\)\{[\s\S]*?\n\}/)[0];
-const powerSrc = src.match(/function windPower\(ms\)\{[\s\S]*?\n\}/)[0];
-const polar = new Function('P', polarSrc + '; return polar;')(P);
-const windPower = new Function('P', powerSrc + '; return windPower;')(P);
+console.log('\n=== 6. 극곡선·풍력 동작 (원본에서 뽑아 실제 실행) ===');
+// 제원과 세계값을 원본에서 뽑는다. 베껴 두지 않으므로 원본이 바뀌면 여기도 함께 움직인다.
+const SPEC = S.shipSpec(src);
+const P = S.worldP(src);
+const SHIP = { spec: SPEC };
+const polar = S.lift(src, 'polar', SHIP, P);
+const windPower = S.lift(src, 'windPower', SHIP, P);
+const NOGO = SPEC.nogoDeg, WMIN = P.windMin, WFULL = P.windFull;
+console.log(`   제원 nogoDeg ${NOGO}°  |  세계 windMin ${WMIN} · windFull ${WFULL} m/s`);
+chk('상수를 이 파일에 베껴 두지 않았다',
+    !/nogoDeg\s*:\s*\d/.test(fs.readFileSync(__filename, 'utf8').split('=== 6.')[1] || ''),
+    '원본에서 뽑아 쓴다');
 
 console.log('   각도 | 추진효율   (0=정면역풍, 180=정후풍)');
 console.log('  ------+---------');
-for (const a of [0, 30, 45, 50, 60, 90, 120, 135, 160, 180])
+for (const a of [0, 30, NOGO, NOGO + 5, 60, 90, 120, 135, 160, 180])
   console.log('  ' + String(a).padStart(5) + ' | ' + (polar(a) * 100).toFixed(0).padStart(5) + '%');
 
-chk('정면 역풍 0%', polar(0) === 0 && polar(30) === 0 && polar(45) === 0);
-chk('사각 바로 밖은 전진 가능', polar(50) > 0.1);
+chk('역풍 사각 안은 0%', polar(0) === 0 && polar(NOGO / 2) === 0 && polar(NOGO) === 0,
+    `0 ~ ${NOGO}°`);
+chk('사각 바로 밖은 전진 가능', polar(NOGO + 5) > 0.1, `${NOGO + 5}° = ${(polar(NOGO+5)*100).toFixed(0)}%`);
 chk('횡풍(90도)이 최대', polar(90) >= polar(60) && polar(90) >= polar(135));
 chk('정후풍이 횡풍보다 느림', polar(180) < polar(90), `${(polar(180)*100).toFixed(0)}% < 100%`);
-chk('단조 증가 구간 (45→90)', polar(60) < polar(75) && polar(75) < polar(90));
+chk('사각과 횡풍 사이가 단조 증가', polar(NOGO + 20) < polar(NOGO + 30) && polar(75) < polar(90));
 
 console.log('\n   풍속 | 추진배수');
 console.log('  ------+---------');
-for (const w of [0, 1.5, 3, 5, 10, 15])
-  console.log('  ' + String(w).padStart(4) + '  | ' + (windPower(w) * 100).toFixed(0).padStart(5) + '%');
-chk('무풍(1.5 이하) 0%', windPower(0) === 0 && windPower(1.5) === 0);
-chk('10 m/s 이상 100%', windPower(10) === 1 && windPower(15) === 1);
-chk('중간값 비례', Math.abs(windPower(5.75) - 0.5) < 0.01);
+for (const w of [0, WMIN, WMIN + 1, (WMIN + WFULL) / 2, WFULL, WFULL + 5])
+  console.log('  ' + w.toFixed(1).padStart(4) + '  | ' + (windPower(w) * 100).toFixed(0).padStart(5) + '%');
+chk('무풍 기준 이하는 0%', windPower(0) === 0 && windPower(WMIN) === 0, `≤ ${WMIN} m/s`);
+chk('최대 풍속 이상은 100%', windPower(WFULL) === 1 && windPower(WFULL + 5) === 1, `≥ ${WFULL} m/s`);
+chk('중간값이 절반', Math.abs(windPower((WMIN + WFULL) / 2) - 0.5) < 0.01,
+    `${((WMIN + WFULL) / 2).toFixed(2)} m/s = 50%`);
+chk('무풍과 최대 사이가 뒤집히지 않았다', WMIN < WFULL, `${WMIN} < ${WFULL}`);
 
 console.log('\n=== 7. 실제 항해 시나리오 (데이터 + 극곡선 결합) ===');
 // wind_data.js 를 직접 읽어 특정 지점/월에서 침로별 실효 속력을 계산
@@ -116,7 +143,7 @@ const r3 = row('아라비아해 12N 65E · 7월', 6, 12, 65);
 const r4 = row('남빙양 45S 20E · 1월', 0, -45, 20);
 
 // 주의: 실효 속력에는 풍속 배수(windPower)가 곱해지므로 절대 %로 기준을 잡으면 안 된다.
-//       실제 풍속이 6 m/s면 정후풍이라도 상한이 37% 정도다. 방향 간 '상대 비교'가 옳다.
+//       실제 풍속이 6 m/s면 정후풍이라도 상한이 그만큼 눌린다. 방향 간 '상대 비교'가 옳다.
 chk('무역풍대에서 동진 불가', r1[2] === 0, '동쪽 침로 0%');
 chk('무역풍대에서 서진 가능', r1[6] > 30 && r1[6] > r1[2], `서 ${r1[6]}% > 동 ${r1[2]}%`);
 chk('계절풍 1월: 남서진 가능 / 7월 불가', r2[5] > 25 && r3[5] === 0,
