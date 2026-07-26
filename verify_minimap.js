@@ -377,7 +377,7 @@ console.log('\n=== 11. 이름 충돌 — 남의 검증을 깨지 않는가 ===')
 // 계기 절이 그 무리와 같은 꼴로 상수를 지으면, 계기와 상관없는 검증이 죽는다.
 // (미니맵 시절 SEA_C 로 지었다가 verify_precip·verify_seatemp 를 깨뜨린 적이 있다.)
 const HARVEST = [/const\s+SEA_\w+/, /const\s+PRECIP_\w+/, /const\s+(RAIN|SNOW)_\w+/,
-                 /const\s+LTN_\w+/, /const\s+STORM_\w+/];
+                 /const\s+LTN_\w+/, /const\s+STORM_\w+/, /const\s+LIM_\w+/];
 for(const re of HARVEST){
   const hit = partDial.match(new RegExp(re.source, 'g'));
   chk('계기가 ' + re.source.replace('const\\s+','') + ' 무리를 쓰지 않는다',
@@ -391,7 +391,8 @@ const harvesters = fs.readdirSync(DIR).filter(f => /^verify_.*\.js$/.test(f) && 
 console.log('  원본에서 상수를 긁어 가는 검증: ' + harvesters.join(', '));
 chk('긁어 가는 검증이 알려진 것뿐이다',
     harvesters.every(f => ['verify_precip.js','verify_precipviz.js',
-                           'verify_seatemp.js','verify_storm.js'].includes(f)),
+                           'verify_seatemp.js','verify_storm.js',
+                           'verify_ship.js'].includes(f)),   // LIM_* — 극 차단선
     harvesters.length + '개');
 
 console.log('\n=== 결과 ===');

@@ -475,5 +475,58 @@ chk('패널이 열렸을 때만 듣는다', /if\(!el\.classList\.contains\('on'\
 chk('값 칸 타이핑 중이면 브라우저에 맡긴다', /classList\.contains\('val'\)\) return;/.test(src));
 chk('되돌릴 때 손이 올라간 칸을 비운다', /el\.contains\(document\.activeElement\)\) document\.activeElement\.blur\(\)/.test(src));
 
+console.log('\n=== 6. 극 차단선 — 배가 넘을 수 없는 위도 ===');
+const limFn = (src.match(/function drawPolarLimits\(\)\{[\s\S]*?\r?\n\}/) || [''])[0];
+chk('극 차단선을 그리는 함수가 있다', limFn.length > 0);
+chk('배보다 먼저 그린다 — 선이 배 밑을 지난다',
+    /drawPolarLimits\(\);[^\n]*\r?\n\s*drawShip\(\);/.test(src));
+// 계기는 이번 작업의 대상이 아니다. 나중에 그쪽에도 그리려면 이 검사를 뒤집어야 한다.
+const dialSrc = (src.match(/const DIAL = \(function[\s\S]*?\r?\n\}\)\(\);/) || [''])[0];
+chk('본 화면에만 그린다 — 원형 계기는 손대지 않았다',
+    dialSrc.length > 0 && !/drawPolarLimits|LIM_DASH/.test(dialSrc));
+// 지형이 아니라 규칙이므로 확대해도 굵어지지 않는다. 배율은 자리를 정할 때만 쓴다.
+chk('화면좌표로 그린다 — 굵기를 배율로 나누지 않는다',
+    /screenTransform\(\)/.test(limFn) && /\* *zoom/.test(limFn) && !/\/ *zoom/.test(limFn));
+chk('굵기·점선이 상수 그대로다',
+    /lineWidth = LIM_W/.test(limFn) && /setLineDash\(\[LIM_DASH, LIM_GAP\]\)/.test(limFn));
+chk('점선 설정이 뒤로 새지 않는다', /ctx\.save\(\)/.test(limFn) && /ctx\.restore\(\)/.test(limFn));
+chk('두 줄을 표 하나가 돈다',
+    /const LIM_Y\s*=\s*\[Y_TOP, Y_BOT\]/.test(src) && /for\(const wy of LIM_Y\)/.test(limFn));
+chk('한계값을 이 자리에 베껴 두지 않았다 — Y_TOP·Y_BOT 에서 뽑는다',
+    !/const LIM_Y\s*=\s*\[\s*[\d.]/.test(src));
+
+// ── 실제로 돌려 자리를 잰다 ──────────────────────────────
+const limSeg = [];
+const limCtx = { strokeStyle:'', lineWidth:0, save(){}, restore(){}, stroke(){},
+                 setLineDash(){}, beginPath(){ limSeg.length = 0; },
+                 moveTo(x,y){ this._y = y; }, lineTo(x,y){ limSeg.push(Math.round(this._y)); } };
+const limBox = { console, ctx: limCtx, screenTransform(){}, ship:{ y:0 }, zoom:100, W:1600, H:900 };
+vm.createContext(limBox);
+let limRan = false;
+try{
+  vm.runInContext([
+    (src.match(/const WORLD_W = \d+, WORLD_H = \d+;/) || [''])[0],
+    (src.match(/const DEG2PXX = [^;]+;/) || [''])[0],
+    (src.match(/const Y_TOP = [^;]+;/) || [''])[0],
+    (src.match(/const LIM_\w+\s*=\s*[^;\n]+;/g) || []).join('\n'),
+    limFn
+  ].join('\n').replace(/\bconst /g, 'var '), limBox);
+  limRan = true;
+}catch(e){ console.log('  (떼어내 돌리기 실패: ' + e.message + ')'); }
+chk('떼어내 돌렸다', limRan);
+if(limRan){
+  const limAt = wy => { limBox.ship.y = wy; limBox.drawPolarLimits(); return limSeg.slice(); };
+  const YT = limBox.Y_TOP, YB = limBox.Y_BOT;
+  chk('한계에 서면 선이 배를 지난다', limAt(YT)[0] === 450, '화면 한가운데 450');
+  chk('남쪽 한계도 같다', limAt(YB)[0] === 450);
+  chk('한계보다 남쪽이면 선이 위에 뜬다', limAt(YT + 2)[0] === 250, '9.8km 남쪽 — 450 → 250');
+  chk('멀어지면 그리지 않는다', limAt(YT + 6).length === 0, '29km 밖 — 화면 밖');
+  chk('적도에서는 두 줄 다 없다', limAt(2048).length === 0);
+  chk('두 줄이 한 화면에 함께 오지 않는다',
+      limAt(YT).length === 1 && limAt(YB).length === 1);
+  console.log(`  북 한계 Y_TOP ${YT.toFixed(1)}  ·  남 한계 Y_BOT ${YB.toFixed(1)} (월드px)`);
+  console.log(`  굵기 ${limBox.LIM_W}px · 점 ${limBox.LIM_DASH}px · 틈 ${limBox.LIM_GAP}px · 색 ${limBox.LIM_C}`);
+}
+
 console.log(`\n${fail === 0 ? '전부 통과' : '실패 있음'} — 통과 ${pass}, 실패 ${fail}\n`);
 process.exit(fail ? 1 : 0);
