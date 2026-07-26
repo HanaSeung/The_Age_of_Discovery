@@ -167,7 +167,7 @@ chk('보급하면 컨디션이 회복된다', box.SHIP.state.morale > m0,
 
 console.log('\n=== 7. 스페이스바 정지 ===');
 chk('paused 상태가 있다', /let paused = false;/.test(src));
-chk('스페이스바가 토글한다', /if\(k===' ' && !e\.repeat\)\{ paused = !paused/.test(src));
+chk('스페이스바가 토글한다', /if\(k===' ' && !e\.repeat\) paused = !paused/.test(src));
 chk('자동반복을 무시한다', /k===' ' && !e\.repeat/.test(src));
 // 시간만 멈추고 그리기는 계속 돌아야 배율·패널 조작이 살아 있다
 const loopSrc = (src.match(/function loop\(now\)\{[\s\S]*?\r?\n\}/) || [''])[0];
@@ -179,7 +179,9 @@ chk('그리기는 정지 밖에 있다',
     !/if\(!paused\)\{[\s\S]*drawWorld/.test(loopSrc.slice(0, loopSrc.indexOf('drawWorld'))));
 chk('계기도 계속 그린다', /DIAL\.draw\(\);/.test(loopSrc));
 // 좌상단 항해일지는 걷어냈다. 정지 표시는 안내줄 하나만 남는다.
-chk('안내줄에 표시한다', /paused\?'on':'off'[\s\S]{0,60}Space/.test(src));
+// 정지는 이제 TOGGLES 표의 한 줄이다 — 특례로 손수 그리지 않는다 (verify_ui §3).
+chk('안내줄에 표시한다', /\['Space','정지', *\(\)=>paused\]/.test(src));
+chk('정지를 따로 그리지 않는다', !/paused\?'on':'off'/.test(src));
 chk('사라진 항해일지를 참조하지 않는다', !/drawHUD|getElementById\('hud'\)/.test(src));
 chk('브라우저 스크롤을 막는다', /includes\(k\)\) e\.preventDefault\(\)/.test(src) &&
     /'arrowright',' '\]/.test(src));

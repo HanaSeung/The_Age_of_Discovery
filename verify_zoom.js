@@ -83,7 +83,14 @@ console.log('\n=== 5. 입력 안전장치 ===');
 chk('패널 입력 중 조타 키 차단', /t==='INPUT'\|\|t==='SELECT'\|\|t==='TEXTAREA'/.test(src));
 chk('P 키 패널 토글', /if\(k==='p'\)\{ const t=document\.getElementById\('tune'\)/.test(src));
 chk('L 키 배율 고정', /if\(k==='l'\)\{ zoomLock=!zoomLock/.test(src));
-chk('안내문에 P 표기', /<kbd>P<\/kbd> 조정패널/.test(src));
+// L·P 는 늘 회색이던 칸에서 토글 목록으로 옮겼다 (2026.07.27). 이제 안내줄이
+// 켜짐/꺼짐을 색으로 알린다. 표의 내용은 verify_ui §3 이 본다.
+chk('안내문에 L·P 가 토글로 들어 있다',
+    /\['L','배율고정', *\(\)=>zoomLock\]/.test(src) &&
+    /\['P','조정패널', *\(\)=>tuneOpen\(\)\]/.test(src));
+chk('눌러도 색이 안 바뀌는 일이 없다 — 갱신 키에 l·p 가 있다',
+    /'[a-z ]*l[a-z ]*'\.includes\(k\)\) updateHint/.test(src) &&
+    /'[a-z ]*p[a-z ]*'\.includes\(k\)\) updateHint/.test(src));
 
 console.log('\n=== 6. 패널 기능 ===');
 chk('패널 DOM 존재', /<div id="tune"><\/div>/.test(src));

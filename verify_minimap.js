@@ -357,7 +357,11 @@ chk('CSS 원 크기가 상수와 같다',
     new RegExp('#dial canvas\\{[^}]*width:' + DIAL.SIZE + 'px').test(src), DIAL.SIZE + 'px');
 chk('계기 위 휠은 아무 일도 하지 않는다',
     /cv\.addEventListener\('wheel'[\s\S]{0,400}?DIAL\.inCircle\(e\.clientX, e\.clientY\)\) return;/.test(src));
-chk('M 키가 비었다 — 새 기능 예약석', !/if\(k==='m'\)/.test(src) && /'ghckb'\.includes\(k\)/.test(src));
+// 안내줄 갱신 키 목록을 뽑아 본다 — 목록을 못박지 않아야 항목이 늘어도 안 깨진다
+const hintKeys = (src.match(/'([a-z ]+)'\.includes\(k\)\) updateHint/) || ['',''])[1];
+chk('M 키가 비었다 — 새 기능 예약석',
+    !/if\(k==='m'\)/.test(src) && hintKeys.length > 0 && !hintKeys.includes('m'),
+    `안내줄 갱신 키: ${hintKeys.trim()}`);
 chk('안내줄에서 미니맵이 빠졌다', !/\['m','미니맵'/.test(src) && !/mini:true/.test(src));
 chk('옛 미니맵·나침반이 걷혔다',
     !/const MINI =/.test(src) && !/function compass\(\)/.test(src) &&

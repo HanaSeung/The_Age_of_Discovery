@@ -182,12 +182,16 @@ const hintHtml = (src.match(/<div id="hint"[\s\S]*?<\/div>/) || [''])[0];
 chk('안내줄을 찾았다', hintHtml.length > 0);
 for(const s of ['W</kbd>/<kbd>S', 'A</kbd>/<kbd>D', '확대', '미세'])
   chk(`"${s}" 가 빠졌다`, !hintHtml.includes(s));
-for(const s of ['L', 'P', 'I'])
-  chk(`${s} 안내는 남아 있다`, new RegExp('<kbd>'+s+'</kbd>').test(hintHtml));
+// L·P 는 토글 목록으로 옮겼다 — 이제 켜짐/꺼짐이 색으로 나온다 (verify_ui §3).
+// I 정보는 안내에서 뺐다. 안내만 지운 것이지 기능은 살아 있다 (아래 조작 검사).
+chk('늘 회색이던 칸이 없다', !/class="dim"/.test(hintHtml));
+chk('안내줄이 토글 목록과 fps 뿐이다',
+    /id="toggles"/.test(hintHtml) && /id="fps"/.test(hintHtml) && !/<kbd>/.test(hintHtml));
 chk('토글 자리는 그대로다', /id="toggles"/.test(hintHtml));
 // 키 조작 자체는 살아 있어야 한다 — 안내만 지운 것이지 기능을 지운 게 아니다
 for(const [n,re] of [['W/S 돛', /k==='w'\|\|k==='arrowup'/], ['A/D 선회', /keys\['a'\]\|\|keys\['arrowleft'\]/],
-                     ['휠 확대', /addEventListener\('wheel'/]])
+                     ['휠 확대', /addEventListener\('wheel'/],
+                     ['I 정보 카드', /if\(k==='i'\)\{ const p=document\.getElementById\('info'\)/]])
   chk(n + ' 조작은 살아 있다', re.test(src));
 
 console.log(`\n${fail === 0 ? '전부 통과' : '실패 있음'} — 통과 ${pass}, 실패 ${fail}\n`);

@@ -22,9 +22,8 @@
   #hint{bottom:12px;left:16px;font-size:12px;max-width:74vw;line-height:1.9;
     background:rgba(14,24,22,.78);border:1px solid rgba(122,90,52,.45);
     border-radius:6px;padding:5px 11px;backdrop-filter:blur(2px);}
-  /* 토글 상태 — 켜짐은 밝은 금색, 꺼짐은 회색 */
-  #hint .dim{color:#a99e86;}
-  #hint .dim kbd{background:#26332f;border-color:#41504b;color:#c8bda3;}
+  /* 토글 상태 — 켜짐은 밝은 금색, 꺼짐은 회색.
+     안내줄은 이제 전부 토글이다. 늘 회색이던 .dim 칸은 걷어냈다 (2026.07.27). */
   #hint .on {color:#ffd98a;font-weight:600;}
   #hint .on kbd{background:#6b5518;border-color:#d8ae3c;color:#fff6d2;}
   #hint .off{color:#7d8884;}
@@ -54,7 +53,10 @@
   #dial.near button:disabled{opacity:.22;}
   #dial .zo{left:2px;top:147px;}       /* − 축소(넓게) — 서쪽 */
   #dial .zi{right:2px;top:147px;}      /* + 확대(좁게) — 동쪽 */
-  #info{top:0;left:0;right:0;bottom:0;display:none;align-items:center;justify-content:center;
+  /* position 이 없으면 top/left/right/bottom 도 z-index 도 듣지 않는다. 그러면
+     화면을 덮는 대신 문서 흐름 끝의 평범한 블록이 되어, 고정된 캔버스 셋에
+     가려 영영 보이지 않는다 (2026.07.27 에 그 상태였다). */
+  #info{position:fixed;top:0;left:0;right:0;bottom:0;display:none;align-items:center;justify-content:center;
     background:rgba(12,20,19,.86);pointer-events:auto;z-index:5;}
   #info .card{max-width:560px;background:#efe2bf;color:#3a2c17;border:2px solid #7a5a34;
     border-radius:6px;padding:22px 26px;box-shadow:0 10px 40px rgba(0,0,0,.5);
@@ -217,7 +219,6 @@
 <canvas id="cg"></canvas>
 <canvas id="c"></canvas>
 <div id="hint" class="panel">
-  <span class="dim"><kbd>L</kbd> 배율고정 · <kbd>P</kbd> 조정패널 · <kbd>I</kbd> 정보</span>
   <span id="toggles"></span>
   <span id="fps" class="fps"></span>
 </div>
@@ -1224,14 +1225,15 @@ addEventListener('keydown',e=>{
   if(k==='k') show.cur=!show.cur;
   if(k==='b') show.wind=!show.wind;
   // M 은 비어 있다 — 원형 계기(DIAL)로 합치며 여닫기를 없앴다. 새 기능 예약석.
-  if('ghckb'.includes(k)) updateHint();      // 토글 색상 갱신
   if(k==='i'){ const p=document.getElementById('info'); p.style.display = p.style.display==='flex'?'none':'flex'; }
   if(k==='l'){ zoomLock=!zoomLock; if(zoomLock) targetZoom=zoom; }   // [테스트] 배율 고정
   if(k==='p'){ const t=document.getElementById('tune');               // [테스트] 조정 패널
                t.classList.toggle('on');                              // 여닫기는 class 로 (전환용)
                TUNE.tipHide();   // 줄 위에 커서를 둔 채 닫으면 말풍선만 남는다
              }
-  if(k===' ' && !e.repeat){ paused = !paused; updateHint(); }         // 정지 / 재개
+  if(k===' ' && !e.repeat) paused = !paused;                          // 정지 / 재개
+  // 안내줄 갱신은 상태를 다 바꾼 뒤 한 번만. 앞에 두면 방금 누른 키가 한 박자 늦게 나온다.
+  if('ghckblp '.includes(k)) updateHint();
   if(!zoomLock){
     if(k==='+'||k==='=') targetZoom=Math.min(ZMAX,targetZoom*1.18);
     if(k==='-'||k==='_') targetZoom=Math.max(ZMIN,targetZoom/1.18);
@@ -1252,14 +1254,28 @@ cv.addEventListener('wheel',e=>{
 const show = {grat:true, rhumb:true, coll:false, cur:true, wind:true};
 
 // ===== 토글 안내 — 켜짐/꺼짐을 글자색으로 표시 =====
-const TOGGLES = [['b','바람','wind'], ['k','해류','cur'],
-                 ['g','경위선','grat'], ['h','나침선','rhumb'], ['c','충돌영역','coll']];
+// 셋째 칸이 '켜졌는가'를 돌려주는 함수다. 상태가 사는 곳이 저마다 다르지만
+// (zoomLock 은 변수, 패널은 DOM 클래스, 나머지는 show 객체) 차이를 함수 안에
+// 가두면 표는 하나로 유지된다. 정지도 특례 없이 이 표로 들어왔다.
+// 표시할 키 글자를 그대로 적는다 — Space 처럼 한 글자가 아닌 것이 있어서다.
+function tuneOpen(){
+  const t = document.getElementById('tune');
+  return !!t && t.classList.contains('on');
+}
+const TOGGLES = [
+  ['L','배율고정', ()=>zoomLock],
+  ['P','조정패널', ()=>tuneOpen()],
+  ['Space','정지', ()=>paused],
+  ['B','바람',     ()=>show.wind],
+  ['K','해류',     ()=>show.cur],
+  ['G','경위선',   ()=>show.grat],
+  ['H','나침선',   ()=>show.rhumb],
+  ['C','충돌영역', ()=>show.coll]
+];
 function updateHint(){
-  document.getElementById('toggles').innerHTML =
-    ' · <span class="'+(paused?'on':'off')+'"><kbd>Space</kbd> 정지</span> · ' +
-    TOGGLES.map(([k,label,f])=>
-      '<span class="'+(show[f]?'on':'off')+'"><kbd>'+k.toUpperCase()+'</kbd> '+label+'</span>'
-    ).join(' · ');
+  document.getElementById('toggles').innerHTML = TOGGLES.map(([key,label,isOn])=>
+    '<span class="'+(isOn()?'on':'off')+'"><kbd>'+key+'</kbd> '+label+'</span>'
+  ).join(' · ');
 }
 updateHint();                              // 최초 1회
 

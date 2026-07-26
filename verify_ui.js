@@ -16,8 +16,11 @@ console.log('\n=== 2. 토글 색상 표시 ===');
 chk('toggles 요소 존재', /<span id="toggles"><\/span>/.test(src));
 chk('updateHint 정의', /function updateHint\(\)/.test(src));
 chk('최초 1회 호출', /updateHint\(\);\s+\/\/ 최초 1회/.test(src));
-chk('키 입력 시 갱신', /if\('ghckb'\.includes\(k\)\) updateHint\(\)/.test(src));
-chk('on/off 클래스 분기', /show\[f\]\?'on':'off'/.test(src));
+chk('키 입력 시 갱신', /if\('ghckblp '\.includes\(k\)\) updateHint\(\)/.test(src));
+// 갱신은 상태를 다 바꾼 뒤여야 한다. 앞에 두면 방금 누른 키가 한 박자 늦게 나온다.
+chk('갱신이 상태 변경 뒤에 온다',
+    /if\(k===' ' && !e\.repeat\) paused = !paused;[\s\S]{0,200}includes\(k\)\) updateHint\(\)/.test(src));
+chk('on/off 클래스 분기', /\(isOn\(\)\?'on':'off'\)/.test(src));
 chk('CSS .on 정의', /#hint \.on \{color:#ffd98a;/.test(src));
 chk('CSS .off 정의', /#hint \.off\{color:#7d8884;\}/.test(src));
 chk('kbd 색도 함께 바뀜', /#hint \.on kbd\{/.test(src) && /#hint \.off kbd\{/.test(src));
@@ -28,16 +31,43 @@ chk('안내줄 불투명(opacity 제거)', !/#hint\{[^}]*opacity/.test(src));
 // 옛 #hud 판은 걷어냈다 — verify_boot.js 가 '없어야 한다'로 지키고 있어,
 // 여기서 '있어야 한다'로 찾으면 두 검증이 정반대를 요구하게 된다
 chk('옛 HUD 판의 잔재가 없다', !/id="hud"/.test(src) && !/#hud\{/.test(src));
-chk('정적 안내 밝기 상향', /#hint \.dim\{color:#a99e86;\}/.test(src));
+// 늘 회색이던 .dim 칸은 걷어냈다 — 안내줄이 전부 토글이 되었다 (2026.07.27).
+chk('.dim 잔재가 없다', !/class="dim"/.test(src) && !/#hint \.dim/.test(src));
 chk('꺼짐도 읽히는 회색', /#hint \.off\{color:#7d8884;\}/.test(src));
 
-console.log('\n=== 3. 5개 토글이 모두 등록됐는지 ===');
-const spec = src.match(/const TOGGLES = \[[\s\S]*?\];/)[0];
-for (const [k, label, f] of [['b','바람','wind'], ['k','해류','cur'], ['g','경위선','grat'],
-                             ['h','나침선','rhumb'], ['c','충돌영역','coll']]) {
-  chk(`${k.toUpperCase()} ${label}`, spec.includes(`'${k}','${label}','${f}'`));
-  chk(`  └ 키 처리 존재`, new RegExp(`k==='${k}'\\) show\\.${f}=!show\\.${f}`).test(src));
+console.log('\n=== 3. 토글 여덟이 모두 등록됐는지 ===');
+// 셋째 칸이 '켜졌는가'를 돌려주는 함수다. 상태가 사는 곳이 저마다 달라도
+// (변수 · DOM 클래스 · show 객체) 표는 하나로 유지된다.
+const spec = src.match(/const TOGGLES = \[[\s\S]*?\n\];/)[0];
+for (const [key, label, read] of [
+      ['L','배율고정','()=>zoomLock'],   ['P','조정패널','()=>tuneOpen()'],
+      ['Space','정지','()=>paused'],     ['B','바람','()=>show.wind'],
+      ['K','해류','()=>show.cur'],       ['G','경위선','()=>show.grat'],
+      ['H','나침선','()=>show.rhumb'],   ['C','충돌영역','()=>show.coll']]) {
+  chk(`${key} ${label}`, spec.includes(`'${key}','${label}'`) && spec.includes(read));
 }
+chk('여덟 줄뿐이다 — 빠뜨린 것도 남는 것도 없다',
+    (spec.match(/\n\s*\['/g) || []).length === 8,
+    (spec.match(/\n\s*\['/g) || []).length + '줄');
+// 화면 토글 다섯은 키 처리도 함께 있어야 한다
+for (const [k, f] of [['b','wind'],['k','cur'],['g','grat'],['h','rhumb'],['c','coll']])
+  chk(`  └ ${k.toUpperCase()} 키 처리 존재`,
+      new RegExp(`k==='${k}'\\) show\\.${f}=!show\\.${f}`).test(src));
+// 나머지 셋은 읽는 곳이 다르므로 그 진실이 하나인지를 본다
+chk('  └ L 은 zoomLock 을 뒤집는다', /if\(k==='l'\)\{ zoomLock=!zoomLock/.test(src));
+chk('  └ P 는 class 로 여닫는다', /t\.classList\.toggle\('on'\)/.test(src));
+chk('  └ 패널 열림을 DOM 에서 읽는다 (상태를 따로 두지 않는다)',
+    /function tuneOpen\(\)\{[\s\S]{0,160}classList\.contains\('on'\)/.test(src));
+chk('  └ Space 는 paused 를 뒤집는다', /if\(k===' ' && !e\.repeat\) paused = !paused/.test(src));
+
+console.log('\n=== 3-1. 안내줄에서 뺀 것 ===');
+const hintHtml = (src.match(/<div id="hint"[\s\S]*?<\/div>/) || [''])[0];
+chk('I 정보 안내가 빠졌다', !/<kbd>I<\/kbd>/.test(hintHtml));
+// 안내만 지운 것이지 기능을 지운 게 아니다 (W/S·A/D 때와 같은 처리)
+chk('I 키 조작은 살아 있다', /if\(k==='i'\)\{ const p=document\.getElementById\('info'\)/.test(src));
+// 카드가 실제로 화면을 덮는가 — position 이 없으면 top/right/z-index 가 전부 죽는다
+chk('정보 카드가 화면에 고정된다', /#info\{position:fixed;/.test(src),
+    'position 이 없으면 흐름 끝의 블록이 되어 캔버스에 가린다');
 
 console.log('\n=== 4. 구조/문법 ===');
 // 세는 범위를 HTML 본문(첫 <script> 앞)으로 좁힌다. 스크립트 안에서는 조정 패널을
@@ -46,7 +76,6 @@ console.log('\n=== 4. 구조/문법 ===');
 const markup = src.split('<script>')[0];
 const opens = (markup.match(/<div/g) || []).length, closes = (markup.match(/<\/div>/g) || []).length;
 chk('본문 div 여닫이 균형', opens === closes, `<div> ${opens} / </div> ${closes}`);
-chk('안내줄에 정적 부분 유지', /class="dim"/.test(src));
 try { new Function(src.split('<script>').pop().split('</script>')[0]); chk('script 파싱', true); }
 catch (e) { chk('script 파싱', false, e.message); }
 
