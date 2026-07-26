@@ -25,6 +25,10 @@
   #hint .on kbd{background:#6b5518;border-color:#d8ae3c;color:#fff6d2;}
   #hint .off{color:#7d8884;}
   #hint .off kbd{background:#212b29;border-color:#3a4441;color:#8b9591;}
+  /* 초당 프레임 — 안내줄 맨 끝. 앞의 구분점은 CSS 가 붙인다.
+     그래야 JS 는 숫자만 넣으면 되고, 첫 갱신 전 빈 칸에 점만 남는 일이 없다. */
+  #hint .fps{color:#9fb3ac;font-family:var(--numfont);}
+  #hint .fps:not(:empty)::before{content:' · ';color:#a99e86;}
   #hint.hidden{display:none;}          /* 설정 탭의 체크상자로 통째로 끈다 */
   /* ===== 나침반 카드 — 조정 패널과 같은 폭·같은 모습 =====
      카드가 바탕을 맡으므로 화면 좌표 계산이 필요 없다. 안의 캔버스는 172px 고정.
@@ -228,6 +232,7 @@
 <div id="hint" class="panel">
   <span class="dim"><kbd>L</kbd> 배율고정 · <kbd>P</kbd> 조정패널 · <kbd>I</kbd> 정보</span>
   <span id="toggles"></span>
+  <span id="fps" class="fps"></span>
 </div>
 <div id="compass">
   <div class="geo" id="cGeo"></div>
@@ -1072,6 +1077,23 @@ function updateHint(){
     ).join(' · ');
 }
 updateHint();                              // 최초 1회
+
+// ===== 초당 프레임 — 안내줄 맨 끝의 숫자 한 칸 =====
+// loop 의 dt 는 물리 폭주를 막느라 0.05 에서 잘린다. 그 값으로 세면 20 아래가 전부
+// 20 으로 뭉개져 정작 봐야 할 느린 구간이 안 보인다. 그래서 자르기 전 간격을 따로 받는다.
+// 매 프레임 값은 초당 60번 널뛰어 못 읽으므로 FPS_WIN 만큼 모아 평균을 낸다.
+const FPS_WIN  = 0.5;              // 이만큼 모아 평균을 낸다(초). 곧 갱신 간격이기도 하다
+const FPS_SKIP = 1.0;              // 이보다 긴 간격은 버린다 — 다른 탭에 다녀오면 몇 초가 찍힌다
+let fpsAcc = 0, fpsN = 0;          // 모은 시간(초), 모은 프레임 수
+let fpsEl = null;                  // 안내줄의 숫자 칸 (처음 쓸 때 한 번만 찾는다)
+function fpsTick(raw){
+  if(raw > FPS_SKIP) return;                    // 돌아온 첫 프레임은 세지 않는다
+  fpsAcc += raw; fpsN++;
+  if(fpsAcc < FPS_WIN) return;
+  if(fpsEl === null) fpsEl = document.getElementById('fps');
+  if(fpsEl) fpsEl.textContent = Math.round(fpsN/fpsAcc) + ' fps';
+  fpsAcc = 0; fpsN = 0;
+}
 
 // ===== 해류 시각화 (표류 파티클) — K 로 표시 토글, 물리는 항상 적용 =====
 const CURVIZ = (function(){
@@ -3282,7 +3304,9 @@ const TUNE = (function(){
 })();
 
 function loop(now){
-  let dt=(now-last)/1000; last=now; if(dt>0.05) dt=0.05;
+  let dt=(now-last)/1000; last=now;
+  fpsTick(dt);                            // 자르기 전 간격으로 센다 — 아래 상한에 물리면 안 된다
+  if(dt>0.05) dt=0.05;
   if(!paused){                  // 시간만 세운다. 아래 그리기는 그대로 돈다
     update(dt);
     CURVIZ.step(dt);
