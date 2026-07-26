@@ -19,7 +19,7 @@ function slice(a, b, what){
 }
 const partConst = slice('// ===== 좌표계 / 월드 상수 =====',
                         '// ===== 수심 밴드', '월드 상수');
-const partLand  = slice('// ===== 육지 폴리곤 → 단일 Path2D',
+const partLand  = slice('// ===== 육지 폴리곤',
                         '// ===== 충돌 마스크', '육지 디코더');
 
 // ---- 껍데기: Path2D 는 부른 명령을 기록한다 ----
@@ -28,6 +28,7 @@ class FakePath2D {
   moveTo(x,y){ ops.push(['M',x,y]); }
   lineTo(x,y){ ops.push(['L',x,y]); }
   closePath(){ ops.push(['C']); }
+  addPath(p){}                        // 고리 경로를 통짜에 합칠 때 — 점을 다시 세면 안 된다
 }
 const sandbox = {
   console: { log(){}, warn(){}, error(m){ throw new Error(m); } },

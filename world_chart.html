@@ -12,7 +12,11 @@
   :root{ --numfont: Georgia, 'Malgun Gothic', sans-serif; }
   html,body{margin:0;height:100%;background:#14211f;overflow:hidden;
     font-family:'Georgia','Times New Roman',serif;color:#e9ddc0;-webkit-font-smoothing:antialiased;}
-  #c{display:block;position:fixed;inset:0;cursor:crosshair;touch-action:none;}
+  /* 캔버스 3층 — 아래(cb): 배경·바다·수심·격자 / 가운데(cg): WebGL 육지 / 위(c): 나머지.
+     DOM 순서가 곧 쌓임 순서다. 입력은 맨 위 #c 가 받는다. */
+  #cb,#cg,#c{display:block;position:fixed;inset:0;}
+  #c{cursor:crosshair;touch-action:none;}
+  #cb,#cg{pointer-events:none;}
   .panel{position:fixed;pointer-events:none;user-select:none;text-shadow:0 1px 2px rgba(0,0,0,.6);}
   /* 안내줄 — 해도 색과 톤이 겹쳐 묻히므로 어두운 배경판을 깐다 */
   #hint{bottom:12px;left:16px;font-size:12px;max-width:74vw;line-height:1.9;
@@ -228,6 +232,8 @@
 </style>
 </head>
 <body>
+<canvas id="cb"></canvas>
+<canvas id="cg"></canvas>
 <canvas id="c"></canvas>
 <div id="hint" class="panel">
   <span class="dim"><kbd>L</kbd> 배율고정 · <kbd>P</kbd> 조정패널 · <kbd>I</kbd> 정보</span>
@@ -273,6 +279,7 @@
  </div>
 </div>
 
+<script src="earcut.min.js"></script><!-- 삼각분할 (Mapbox earcut 2.2.4, ISC) — GPU 육지용 -->
 <script src="land_data.js"></script>
 <script src="bathy_data.js"></script>
 <script src="currents_data.js"></script>
@@ -335,9 +342,13 @@ const BATHY = (function(){
   return meta;
 })();
 
-// ===== 육지 폴리곤 → 단일 Path2D (evenodd) + 해안선 선분 : land_data.js 이진 디코드 =====
-// 그리는 것(landPath)과 막는 것(COASTSEG)을 같은 자료에서 함께 뽑는다.
+// ===== 육지 폴리곤 → 고리별 Path2D (evenodd) + 해안선 선분 : land_data.js 이진 디코드 =====
+// 그리는 것(landPath·LAND_RINGS)과 막는 것(COASTSEG)을 같은 자료에서 함께 뽑는다.
 // 배율을 아무리 올려도 둘이 어긋나지 않는다 — 이것이 요점이다.
+//
+// 고리별로 나누는 이유(2026.07): 통짜 경로 하나면 화면에 육지가 없어도 매 프레임
+// 41만 점을 통째로 훑는다. 고리마다 경계상자를 두고 화면에 걸치는 것만 그린다.
+// 통짜 landPath 도 남긴다 — 낮은 배율에서 거의 다 보일 때는 통짜가 더 싸다.
 //
 // 형식 delta8 (2026.07 개정). 고리마다 첫 점만 절대(int32, 경도x1000)이고 나머지는
 // 앞 점에서의 차이를 int8 둘로 담는다. dx 가 -128 이면 탈출 부호이고 뒤에 int16 이
@@ -346,6 +357,7 @@ const BATHY = (function(){
 // 못했다. 델타는 작아서 0.111km 격자를 쓰고도 파일이 절대 int32 의 1/3 이다.
 const landPath = new Path2D();
 let COASTSEG = null;                   // Float32Array — 선분마다 x0,y0,x1,y1  (색 상수 COAST 와 구분)
+let LAND_RINGS = null;                 // 고리마다 {p:Path2D, n:점수, x0,y0,x1,y1:경계상자(월드px)}
 (function(){
   const L = window.LANDBIN;
   if(!L){ console.error('land_data.js 없음 — build_land.py 를 실행하시오'); return; }
@@ -363,14 +375,19 @@ let COASTSEG = null;                   // Float32Array — 선분마다 x0,y0,x1
   for(let r=0;r<nRings;r++){ lens[r]=dv.getUint32(off,true); off+=4; }
   const S = L.scale;
   COASTSEG = new Float32Array(L.points*4);
+  LAND_RINGS = new Array(nRings);
   let s = 0;
   for(let r=0;r<nRings;r++){
     const n = lens[r];
+    const rp = new Path2D();                       // 이 고리만의 경로
+    const cArr = new Float32Array(n*2);            // 고리 좌표 원본 — GPU 삼각분할용
     let xi = dv.getInt32(off,true); off+=4;        // 고리의 첫 점 — 여기만 절대좌표
     let yi = dv.getInt32(off,true); off+=4;
     let p = project(xi/S, yi/S);
-    landPath.moveTo(p[0],p[1]);
+    rp.moveTo(p[0],p[1]);
+    cArr[0]=p[0]; cArr[1]=p[1];
     let fx=p[0], fy=p[1], ax=p[0], ay=p[1];        // 고리의 첫 점 / 직전 점
+    let bx0=p[0], by0=p[1], bx1=p[0], by1=p[1];    // 경계상자
     for(let i=1;i<n;i++){
       let dx = dv.getInt8(off); off+=1;
       let dy;
@@ -379,16 +396,49 @@ let COASTSEG = null;                   // Float32Array — 선분마다 x0,y0,x1
       else           { dy = dv.getInt8(off); off+=1; }
       xi += dx; yi += dy;
       p = project(xi/S, yi/S);
-      landPath.lineTo(p[0],p[1]);
+      rp.lineTo(p[0],p[1]);
+      cArr[i*2]=p[0]; cArr[i*2+1]=p[1];
+      if(p[0]<bx0)bx0=p[0]; else if(p[0]>bx1)bx1=p[0];
+      if(p[1]<by0)by0=p[1]; else if(p[1]>by1)by1=p[1];
       COASTSEG[s++]=ax; COASTSEG[s++]=ay; COASTSEG[s++]=p[0]; COASTSEG[s++]=p[1];
       ax=p[0]; ay=p[1];
     }
-    landPath.closePath();
+    rp.closePath();
     if(n>1){ COASTSEG[s++]=ax; COASTSEG[s++]=ay; COASTSEG[s++]=fx; COASTSEG[s++]=fy; }  // 고리를 닫는 변
+    landPath.addPath(rp);                          // 통짜에도 담는다 (전체가 보일 때용)
+    LAND_RINGS[r] = { p:rp, n:n, x0:bx0, y0:by0, x1:bx1, y1:by1, c:cArr };
   }
   COASTSEG = COASTSEG.subarray(0, s);
   console.log('land: rings',nRings,'points',L.points,'| 해안선 선분',s/4);
 })();
+
+// ===== 육지 컬링 — 화면에 걸치는 고리만 모아 그린다 =====
+// 구멍(카스피해)이 하나 있으나 짝홀(evenodd)은 그대로 지켜진다: 구멍의 상자는 반드시
+// 바깥 고리의 상자 안에 있으므로, 구멍이 보이면 바깥 고리도 함께 뽑힌다.
+// 화면이 어느 고리의 안쪽에 통째로 들어간 경우도 그 고리의 상자가 화면을 덮으므로 뽑힌다.
+// 후퇴 문턱의 산수: 추린 경로는 (복사 1회 + 그리기 3회) x 보이는 점,
+// 통짜는 그리기 3회 x 415,936점. 4v < 3x415,936 인 동안, 즉 약 31만 점까지는
+// 추리는 쪽이 싸다. 본토 고리(유라시아·아프리카 81,462점)가 보여도 추리는 것이
+// 통짜의 1/5 이다 — 항해의 주 무대가 대륙 해안이므로 여기서 물러서면 안 된다.
+// 통짜로 물러나는 것은 낮은 배율에서 세계가 거의 다 보일 때뿐이다.
+const LAND_CULL_MAX = 300000; // 보이는 점이 이보다 많으면 통짜 landPath 로 그린다
+function landCull(k){
+  if(!LAND_RINGS) return landPath;                 // 디코드 실패 시 옛 길로
+  const hw=(W/2)/zoom, hh=(H/2)/zoom;
+  const vx0=ship.x-hw-k*WORLD_W, vx1=ship.x+hw-k*WORLD_W;   // 이 순환 오프셋에서의 화면(월드px)
+  const vy0=ship.y-hh, vy1=ship.y+hh;
+  let pts=0; const vis=[];
+  for(let i=0;i<LAND_RINGS.length;i++){
+    const r=LAND_RINGS[i];
+    if(r.x1<vx0 || r.x0>vx1 || r.y1<vy0 || r.y0>vy1) continue;
+    pts+=r.n;
+    if(pts>LAND_CULL_MAX) return landPath;
+    vis.push(r);
+  }
+  const p=new Path2D();
+  for(let i=0;i<vis.length;i++) p.addPath(vis[i].p);
+  return p;
+}
 
 // ===== 충돌 마스크 래스터화 (메모리 절약: 가로 밴드 단위로 판독) =====
 // 주의: 배의 이동은 더 이상 이것을 쓰지 않는다 (아래 해안선 색인이 맡는다).
@@ -528,6 +578,55 @@ function moveWithCoast(x, y, dx, dy, out){
     else { out.stop=true; break; }                                       // ③ 막다른 곳
   }
   return out;
+}
+
+// ===== 해안선 stroke 수집 — 충돌 색인을 그리기에도 쓴다 =====
+// GPU 가 채움(fill)을 맡으면 2D 층에 남는 육지 몫은 stroke 둘(음영·해안선)이다.
+// 통짜 경로를 긋면 41만 선분을 다 훑으므로, 배 이동이 쓰는 CSR 격자 색인에서
+// 화면에 걸친 칸의 선분만 모은다. COASTSEG 는 고리 순서대로 담겨 있어
+// 이웃 번호 선분은 끝점을 공유한다 — 이어지는 것은 lineTo 로 붙여 폴리라인을 만든다.
+// 그래야 반투명 음영이 이음마다 덧칠되지 않고 round join 이 제대로 든다.
+const SEG_STROKE_MAX = 150000;   // 보이는 선분이 이보다 많으면 null — 통짜 stroke 로 후퇴 (저배율)
+let segStamp = null, segGen = 0; // 중복 제거 도장 (선분 하나가 여러 칸에 걸친다)
+function coastStrokePath(k){
+  if(!cellStart || !COASTSEG) return null;
+  if(!segStamp) segStamp = new Uint32Array(COASTSEG.length/4);
+  segGen++;
+  const hw=(W/2)/zoom, hh=(H/2)/zoom;
+  const vx0=ship.x-hw-k*WORLD_W, vx1=ship.x+hw-k*WORLD_W;
+  const vy0=ship.y-hh, vy1=ship.y+hh;
+  let gy0=Math.floor(vy0/COL_CELL), gy1=Math.floor(vy1/COL_CELL);
+  if(gy0<0) gy0=0; else if(gy0>CGH-1) gy0=CGH-1;      // 색인과 같은 방식으로 양끝을 자른다
+  if(gy1<0) gy1=0; else if(gy1>CGH-1) gy1=CGH-1;
+  const gx0=Math.floor(vx0/COL_CELL), gx1=Math.floor(vx1/COL_CELL);
+  const ids=[];
+  for(let gy=gy0;gy<=gy1;gy++){
+    const row=gy*CGW;
+    for(let gx=gx0;gx<=gx1;gx++){
+      const c = row + (((gx%CGW)+CGW)%CGW);           // 경도는 감는다
+      for(let t=cellStart[c];t<cellStart[c+1];t++){
+        const i=cellItem[t];
+        if(segStamp[i]===segGen) continue;
+        segStamp[i]=segGen;
+        ids.push(i);
+        if(ids.length>SEG_STROKE_MAX) return null;    // 너무 많다 — 통짜가 싸다
+      }
+    }
+  }
+  ids.sort((a,b)=>a-b);
+  const p=new Path2D();
+  let prev=-2, lx=0, ly=0;
+  for(let j=0;j<ids.length;j++){
+    const id=ids[j], o=id*4;
+    if(id===prev+1 && COASTSEG[o]===lx && COASTSEG[o+1]===ly){
+      p.lineTo(COASTSEG[o+2],COASTSEG[o+3]);          // 앞 선분과 이어진다 — 폴리라인 계속
+    }else{
+      p.moveTo(COASTSEG[o],COASTSEG[o+1]);
+      p.lineTo(COASTSEG[o+2],COASTSEG[o+3]);
+    }
+    prev=id; lx=COASTSEG[o+2]; ly=COASTSEG[o+3];
+  }
+  return p;
 }
 
 // ===== 해류 필드 (NASA OSCAR 2° u/v 격자) =====
@@ -881,6 +980,125 @@ function windPower(ms){
 
 // ===== 캔버스 =====
 const cv = document.getElementById('c'); const ctx = cv.getContext('2d');
+// 3층의 나머지 둘 — 아래(cb): 배경·바다·수심·격자, 가운데(cg): WebGL 육지.
+// 위층 ctx 는 이제 투명 배경이라 매 프레임 clearRect 로 지운다 (loop 참조).
+const bcv = document.getElementById('cb'); const bctx = bcv.getContext('2d');
+const gcv = document.getElementById('cg');
+
+// ===== 육지 GPU 그리기 (WebGL) — 업계 표준 방식 =====
+// 정적 도형(육지)은 부팅 때 한 번 삼각형으로 쪼개 GPU 버퍼에 올린다. 매 프레임 비용은
+// draw 호출뿐이라 41만 점을 CPU 로 훑던 값(리스본 20fps 의 몸통)이 사라진다.
+// 삼각분할은 Mapbox earcut(ISC). 짝홀 대신 구멍을 명시해야 하므로 감김 방향으로
+// 구멍을 찾아 바깥 고리에 붙인다. GL 이 없거나 실패하면 ok=false — drawWorld 가
+// 기존 2D 길(landCull)로 후퇴한다.
+const GLL = (function(){
+  const out = { ok:false, tris:0, holes:0, ms:0, draw(){}, frame(){} };
+  if(typeof document==='undefined') return out;               // 검증 샌드박스
+  // --- 삼각분할 (순수 함수 — 검증이 이 구간을 그대로 오려 돌린다) ---
+  function buildLandTris(rings, earcutFn){
+    // 부호 면적 (y 아래로 큰 좌표계). 감김 방향이 원본 GeoJSON 에서 보존돼 있다.
+    const area2 = c => { let s=0; for(let i=0,n=c.length/2;i<n;i++){ const j=(i+1)%n;
+      s += c[i*2]*c[j*2+1] - c[j*2]*c[i*2+1]; } return s/2; };
+    const inPoly = (x,y,c) => { let w=false;                  // 짝홀 광선
+      for(let i=0,n=c.length/2,j=n-1;i<n;j=i++){
+        const xi=c[i*2],yi=c[i*2+1],xj=c[j*2],yj=c[j*2+1];
+        if((yi>y)!==(yj>y) && x < (xj-xi)*(y-yi)/(yj-yi)+xi) w=!w; }
+      return w; };
+    const info = rings.map((r,i) => ({ r, i, a: area2(r.c) }));
+    let pos=0; for(const it of info) if(it.a>0) pos++;
+    const holeSign = (pos > info.length/2) ? -1 : 1;          // 소수 부호 = 구멍
+    const holesOf = new Map();                                // 바깥 고리 번호 -> [구멍...]
+    let nHoles=0;
+    for(const it of info){
+      if(it.a===0 || Math.sign(it.a)!==holeSign) continue;
+      const hx=it.r.c[0], hy=it.r.c[1];
+      let best=null;                                          // 담는 것 중 가장 작은 바깥
+      for(const ot of info){
+        if(ot===it || Math.sign(ot.a)===holeSign) continue;
+        if(hx<ot.r.x0||hx>ot.r.x1||hy<ot.r.y0||hy>ot.r.y1) continue;
+        if(!inPoly(hx,hy,ot.r.c)) continue;
+        if(!best || Math.abs(ot.a)<Math.abs(best.a)) best=ot;
+      }
+      if(best){ if(!holesOf.has(best.i)) holesOf.set(best.i,[]); holesOf.get(best.i).push(it.r); nHoles++; }
+    }
+    const chunks=[]; let tris=0;
+    for(const it of info){
+      if(it.a!==0 && Math.sign(it.a)===holeSign) continue;    // 구멍은 바깥에 붙어서 처리됨
+      const hs = holesOf.get(it.i);
+      let coords=it.r.c, holeIdx=null;
+      if(hs){
+        let tot=it.r.c.length; for(const h of hs) tot+=h.c.length;
+        coords=new Float64Array(tot); coords.set(it.r.c,0);
+        holeIdx=[]; let o=it.r.c.length;
+        for(const h of hs){ holeIdx.push(o/2); coords.set(h.c,o); o+=h.c.length; }
+      }
+      const idx = earcutFn(coords, holeIdx, 2);
+      const v = new Float32Array(idx.length*2);
+      for(let j=0;j<idx.length;j++){ v[j*2]=coords[idx[j]*2]; v[j*2+1]=coords[idx[j]*2+1]; }
+      chunks.push(v); tris += idx.length/3;
+    }
+    let tot=0; for(const c of chunks) tot+=c.length;
+    const verts=new Float32Array(tot); let o=0;
+    for(const c of chunks){ verts.set(c,o); o+=c.length; }
+    return { verts, tris, holes:nHoles };
+  }
+  out.buildLandTris = buildLandTris;
+  // --- 삼각분할 끝 ---
+  const gl = gcv && gcv.getContext && gcv.getContext('webgl',{alpha:true,antialias:true});
+  if(!gl || !LAND_RINGS || typeof earcut==='undefined'){
+    console.warn('gl-land: WebGL/earcut/자료 없음 — 2D 길로 후퇴'); return out;
+  }
+  const t0 = performance.now();
+  const built = buildLandTris(LAND_RINGS, earcut);
+  const mk = (t,src) => { const s=gl.createShader(t); gl.shaderSource(s,src); gl.compileShader(s);
+    if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s)); return s; };
+  let prog, loc;
+  try{
+    // 카메라 상대 좌표 — float32 로 배율 100 을 견디는 표준 수법.
+    // 뺄셈을 셰이더에서 먼저 해 큰 수 x 큰 배율의 정밀도 손실을 피한다.
+    prog = gl.createProgram();
+    gl.attachShader(prog, mk(gl.VERTEX_SHADER,
+      'attribute vec2 aP; uniform vec2 uCam; uniform float uZ; uniform vec2 uHalf; uniform float uOff;\n'+
+      'void main(){ vec2 p = vec2(aP.x + uOff - uCam.x, aP.y - uCam.y) * uZ;\n'+
+      '  gl_Position = vec4(p.x/uHalf.x, -p.y/uHalf.y, 0.0, 1.0); }'));
+    gl.attachShader(prog, mk(gl.FRAGMENT_SHADER,
+      'precision mediump float; uniform vec4 uCol;\n'+
+      'void main(){ gl_FragColor = uCol; }'));
+    gl.linkProgram(prog);
+    if(!gl.getProgramParameter(prog,gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+  }catch(e){ console.error('gl-land: 셰이더 실패 — 2D 길로 후퇴', e); return out; }
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, built.verts, gl.STATIC_DRAW);
+  loc = { aP:gl.getAttribLocation(prog,'aP'), uCam:gl.getUniformLocation(prog,'uCam'),
+          uZ:gl.getUniformLocation(prog,'uZ'), uHalf:gl.getUniformLocation(prog,'uHalf'),
+          uOff:gl.getUniformLocation(prog,'uOff'), uCol:gl.getUniformLocation(prog,'uCol') };
+  const nVerts = built.verts.length/2;
+  let col = null;                                             // LAND_C 는 뒤에 선언 — 첫 프레임에 읽는다
+  out.frame = function(){
+    gl.viewport(0,0,gcv.width,gcv.height);
+    gl.disable(gl.DEPTH_TEST); gl.disable(gl.BLEND);
+    gl.clearColor(0,0,0,0); gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.useProgram(prog);
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.enableVertexAttribArray(loc.aP);
+    gl.vertexAttribPointer(loc.aP, 2, gl.FLOAT, false, 0, 0);
+    if(!col){ const m=/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(LAND_C);
+      col = m ? [parseInt(m[1],16)/255,parseInt(m[2],16)/255,parseInt(m[3],16)/255,1] : [0.85,0.78,0.62,1]; }
+    gl.uniform4fv(loc.uCol, col);
+    gl.uniform2f(loc.uCam, ship.x, ship.y);
+    gl.uniform1f(loc.uZ, zoom);
+    gl.uniform2f(loc.uHalf, W/2, H/2);
+  };
+  out.draw = function(k){
+    gl.uniform1f(loc.uOff, k*WORLD_W);
+    gl.drawArrays(gl.TRIANGLES, 0, nVerts);
+  };
+  out.ok = true; out.tris = built.tris; out.holes = built.holes;
+  out.ms = Math.round(performance.now()-t0);
+  console.log('gl-land: 삼각형',built.tris,'| 구멍',built.holes,'| 준비',out.ms+'ms');
+  return out;
+})();
 // 나침반 카드 안의 전용 캔버스. resize() 가 이 아래에서 바로 불리므로 여기서 잡아 둔다
 // (const 는 끌어올려지지 않아, 뒤에서 선언하면 resize() 가 접근하는 순간 죽는다).
 // 안쪽 그림은 기준 반지름 34 로 그리고 배율만 건다. 바깥 원(R0+PAD)이 캔버스에 꽉 찬다.
@@ -898,6 +1116,8 @@ function resize(){
   DPR = Math.min(window.devicePixelRatio||1, 2);
   W = window.innerWidth; H = window.innerHeight;
   cv.width = W*DPR; cv.height = H*DPR;
+  bcv.width = W*DPR; bcv.height = H*DPR;     // 아래층(배경·바다)도 같은 크기
+  gcv.width = W*DPR; gcv.height = H*DPR;     // GL 층 — viewport 는 GLL.frame 이 매 프레임 맞춘다
   // A안: 최소 배율 = '월드 한 바퀴(WORLD_W)가 화면 폭을 꽉 채움' → 지구 반복 방지
   ZMIN = W / WORLD_W;
   if(typeof targetZoom==='number' && targetZoom<ZMIN) targetZoom=ZMIN;
@@ -1273,56 +1493,69 @@ const DEPTH_COL = ['#bdd2c4',   // 0–200m    연안·대륙붕
                    '#557a76'];  // 6000m+    해구
 const DEPTH_EDGE = 'rgba(60,44,26,0.20)';
 
-function worldTransform(k){
+function worldTransform(k,c){              // c 생략 시 위층 ctx — 아래층은 bctx 를 넘긴다
   const a = zoom*DPR;
   const e = (W/2 - ship.x*zoom + k*WORLD_W*zoom)*DPR;
   const f = (H/2 - ship.y*zoom)*DPR;
-  ctx.setTransform(a,0,0,a,e,f);
+  (c||ctx).setTransform(a,0,0,a,e,f);
 }
 function screenTransform(){ ctx.setTransform(DPR,0,0,DPR,0,0); }
 
-function drawGraticule(){
-  ctx.lineWidth = 1/zoom; ctx.strokeStyle = GRAT; ctx.beginPath();
-  for(let lon=-180; lon<=180; lon+=15){ const x=(lon+180)*DEG2PXX; ctx.moveTo(x,0); ctx.lineTo(x,WORLD_H); }
-  for(let lat=-75; lat<=75; lat+=15){ const y=(90-lat)*DEG2PXY; ctx.moveTo(0,y); ctx.lineTo(WORLD_W,y); }
-  ctx.stroke();
+function drawGraticule(c=ctx){
+  c.lineWidth = 1/zoom; c.strokeStyle = GRAT; c.beginPath();
+  for(let lon=-180; lon<=180; lon+=15){ const x=(lon+180)*DEG2PXX; c.moveTo(x,0); c.lineTo(x,WORLD_H); }
+  for(let lat=-75; lat<=75; lat+=15){ const y=(90-lat)*DEG2PXY; c.moveTo(0,y); c.lineTo(WORLD_W,y); }
+  c.stroke();
   // 적도 강조
-  ctx.strokeStyle='rgba(74,54,32,.30)'; ctx.beginPath();
-  const yeq=(90)*DEG2PXY; ctx.moveTo(0,yeq); ctx.lineTo(WORLD_W,yeq); ctx.stroke();
+  c.strokeStyle='rgba(74,54,32,.30)'; c.beginPath();
+  const yeq=(90)*DEG2PXY; c.moveTo(0,yeq); c.lineTo(WORLD_W,yeq); c.stroke();
 }
-function drawRhumb(){
-  ctx.lineWidth = 1/zoom; ctx.strokeStyle = RHUMB;
+function drawRhumb(c=ctx){
+  c.lineWidth = 1/zoom; c.strokeStyle = RHUMB;
   const hubs=[[2100,1500],[5600,1350],[3900,2650]];
   for(const [hx,hy] of hubs){
-    ctx.beginPath();
+    c.beginPath();
     for(let a=0;a<16;a++){ const r=2600, an=a*Math.PI/8;
-      ctx.moveTo(hx,hy); ctx.lineTo(hx+Math.cos(an)*r, hy+Math.sin(an)*r); }
-    ctx.stroke();
+      c.moveTo(hx,hy); c.lineTo(hx+Math.cos(an)*r, hy+Math.sin(an)*r); }
+    c.stroke();
   }
 }
 
 function drawWorld(k){
-  worldTransform(k);
-  // 바다 — 수심 밴드 (얕은 것부터 덮어 칠함: 누적 폴리곤 구조상 이 순서라야 함)
-  ctx.fillStyle = DEPTH_COL[0]; ctx.fillRect(0,0,WORLD_W,WORLD_H);   // 0~200m 기준면
+  // --- 아래층(bctx): 바다·수심·항정선·경위선 — 육지(GL)보다 밑에 깔린다 ---
+  worldTransform(k,bctx);
+  bctx.fillStyle = DEPTH_COL[0]; bctx.fillRect(0,0,WORLD_W,WORLD_H);   // 0~200m 기준면
   if(BATHY){
     for(let b=0;b<BATHY.length;b++){
-      ctx.fillStyle = DEPTH_COL[b+1];
-      ctx.fill(BATHY[b].path,'evenodd');
+      bctx.fillStyle = DEPTH_COL[b+1];
+      bctx.fill(BATHY[b].path,'evenodd');
     }
-    ctx.strokeStyle = DEPTH_EDGE; ctx.lineWidth = 0.8/zoom;          // 등심선 — 동판화풍 얇은 윤곽
-    for(let b=0;b<BATHY.length;b++) ctx.stroke(BATHY[b].path);
+    bctx.strokeStyle = DEPTH_EDGE; bctx.lineWidth = 0.8/zoom;          // 등심선 — 동판화풍 얇은 윤곽
+    for(let b=0;b<BATHY.length;b++) bctx.stroke(BATHY[b].path);
   }
-  if(show.rhumb) drawRhumb();
-  if(show.grat)  drawGraticule();
-  // 육지 (해안 음영 → 채움 → 해안선)
+  if(show.rhumb) drawRhumb(bctx);
+  if(show.grat)  drawGraticule(bctx);
+  // --- 육지: 채움은 GL 층, stroke 는 위층에서 화면 안 선분만 ---
+  worldTransform(k);
   ctx.lineJoin='round';
-  ctx.strokeStyle='rgba(60,40,22,.28)'; ctx.lineWidth=3.2/zoom; ctx.stroke(landPath);
-  ctx.fillStyle = LAND_C; ctx.fill(landPath,'evenodd');
-  ctx.strokeStyle = COAST; ctx.lineWidth = 1.1/zoom; ctx.stroke(landPath);
-  if(show.coll){ ctx.fillStyle='rgba(200,40,30,.34)'; ctx.fill(landPath,'evenodd');
-                 // 선체 반지름만큼 부푼 띠 — 배가 실제로 못 들어가는 자리다
-                 ctx.strokeStyle='rgba(200,40,30,.34)'; ctx.lineWidth=HULL_R*2; ctx.stroke(landPath); }
+  if(GLL.ok){
+    GLL.draw(k);                                   // 채움 — GPU. 41만 점 순회가 프레임에서 사라진다
+    const sp = coastStrokePath(k) || landPath;     // null(저배율) 이면 통짜로
+    ctx.strokeStyle='rgba(60,40,22,.28)'; ctx.lineWidth=3.2/zoom; ctx.stroke(sp);
+    ctx.strokeStyle = COAST; ctx.lineWidth = 1.1/zoom; ctx.stroke(sp);
+    if(show.coll){ const lp = landCull(k);         // 디버그 표시만 옛 경로 — 채움이 필요해서
+                   ctx.fillStyle='rgba(200,40,30,.34)'; ctx.fill(lp,'evenodd');
+                   ctx.strokeStyle='rgba(200,40,30,.34)'; ctx.lineWidth=HULL_R*2; ctx.stroke(sp); }
+  }else{
+    // 후퇴 — GL 이 없으면 예전 그대로 (해안 음영 → 채움 → 해안선, landCull)
+    const lp = landCull(k);
+    ctx.strokeStyle='rgba(60,40,22,.28)'; ctx.lineWidth=3.2/zoom; ctx.stroke(lp);
+    ctx.fillStyle = LAND_C; ctx.fill(lp,'evenodd');
+    ctx.strokeStyle = COAST; ctx.lineWidth = 1.1/zoom; ctx.stroke(lp);
+    if(show.coll){ ctx.fillStyle='rgba(200,40,30,.34)'; ctx.fill(lp,'evenodd');
+                   // 선체 반지름만큼 부푼 띠 — 배가 실제로 못 들어가는 자리다
+                   ctx.strokeStyle='rgba(200,40,30,.34)'; ctx.lineWidth=HULL_R*2; ctx.stroke(lp); }
+  }
   // 해도 상하단 경계
   ctx.strokeStyle='rgba(50,34,18,.5)'; ctx.lineWidth=2/zoom;
   ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(WORLD_W,0);
@@ -3314,9 +3547,12 @@ function loop(now){
   }
   updateSight();   // 멈춰 있어도 시야는 잰다 — 패널이 열려 있으면 값이 보이므로
   SND.step();      // 소리도 같다 — 멈춰 있어도 비는 계속 내리고 있으니까
-  // 배경(해도 밖 = 미지의 바다)
+  // 배경(해도 밖 = 미지의 바다)은 아래층에. 위층은 투명 배경이라 지우기만 한다
+  bctx.setTransform(DPR,0,0,DPR,0,0);
+  bctx.fillStyle=VOID; bctx.fillRect(0,0,W,H);
   ctx.setTransform(DPR,0,0,DPR,0,0);
-  ctx.fillStyle=VOID; ctx.fillRect(0,0,W,H);
+  ctx.clearRect(0,0,W,H);
+  if(GLL.ok) GLL.frame();       // GL 층 지우기 + 카메라 유니폼 — draw(k) 는 drawWorld 가 부른다
   // 보이는 순환 오프셋만 그림
   const halfW = (W/2)/zoom;
   const leftEdge = ship.x-halfW, rightEdge = ship.x+halfW;

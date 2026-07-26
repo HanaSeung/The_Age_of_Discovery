@@ -410,3 +410,10 @@ int16 상한 32,767,  경도 최대 180
 - `verify_scale.js` **13/13** — 디코더를 자기 안에 복제해 두어 형식 변경과 함께 터졌다.
   이진 검사는 `verify_land.js`로 넘기고 제거. 경로가 `D:\`로 박혀 있어 C: 컴퓨터에서는
   아예 돌지 않던 것도 `__dirname`으로 고쳤다.
+
+
+## earcut (삼각분할 라이브러리)
+- 파일: earcut.min.js (v2.2.4)
+- 출처: https://github.com/mapbox/earcut (unpkg 배포본)
+- 라이선스: ISC (Copyright (c) 2016, Mapbox) — _earcut_LICENSE.txt 동봉
+- 용도: 육지 폴리곤을 GPU 삼각형으로 분할 (world_chart.html GLL 모듈)
