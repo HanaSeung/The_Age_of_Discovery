@@ -55,13 +55,20 @@ chk('돛은 단수로 올리고 내린다',
     /ship\.sail = Math\.min\(SAIL_MAX, ship\.sail\+1\)/.test(src) &&
     /ship\.sail = Math\.max\(0, ship\.sail-1\)/.test(src));
 chk('자동반복을 막는다 — 키를 누르고 있어도 한 단만 오른다', /if\(!e\.repeat\)/.test(src));
-chk('목표 속력 = 돛 단수 비율 × 바람 효율',
-    /const target = SPEED \* \(ship\.sail\/SAIL_MAX\) \* sailEff/.test(src));
-chk('가속은 목표를 넘지 않는다', /Math\.min\(target, ship\.speed \+ ACC_UP\*dt\)/.test(src));
-chk('감속은 목표 아래로 내려가지 않는다', /Math\.max\(target, ship\.speed - ACC_DN\*dt\)/.test(src));
+chk('목표 속력 = 최고속 × 돛 단수 비율 × 바람 효율',
+    /const target = topSpd \* \(ship\.sail\/SAIL_MAX\) \* topEff/.test(src));
+// 평시(강제 속력 0)에는 최고속이 곧 추진력이고 바람 몫이 sailEff 다 — 옛 식 그대로다.
+// 강제 속력을 켜면 최고속만 그 값으로 갈리고 바람 몫이 1 로 굳는다.
+chk('평시에는 추진력과 바람 효율이 그 자리에 든다',
+    /topSpd = forced \? P\.shipForce \/ PX_TO_KN : SPEED/.test(src) &&
+    /topEff = forced \? 1 : sailEff/.test(src));
+chk('가속은 목표를 넘지 않는다', /Math\.min\(target, ship\.speed \+ ACC_UP\*accK\*dt\)/.test(src));
+chk('감속은 목표 아래로 내려가지 않는다', /Math\.max\(target, ship\.speed - ACC_DN\*accK\*dt\)/.test(src));
+chk('가감속 기준이 최고속을 따라간다', /accK = topSpd \/ SPEED/.test(src),
+    '가속 N초가 강제 속력을 켜도 같은 뜻을 지킨다');
 chk('후진이 없다', /if\(ship\.speed < 0\) ship\.speed = 0/.test(src));
 chk('선회율이 속력을 따른다',
-    /const rf = TURN_IDLE \+ \(1-TURN_IDLE\)\*Math\.min\(1, ship\.speed\/SPEED\)/.test(src));
+    /const rf = TURN_IDLE \+ \(1-TURN_IDLE\)\*Math\.min\(1, ship\.speed\/topSpd\)/.test(src));
 chk('A/D 로 좌우 회전', /keys\['a'\]\|\|keys\['arrowleft'\]\)\s*turn -= 1/.test(src) &&
     /keys\['d'\]\|\|keys\['arrowright'\]\) turn \+= 1/.test(src));
 chk('회전은 선회율을 거쳐 침로에 더한다',
@@ -69,8 +76,9 @@ chk('회전은 선회율을 거쳐 침로에 더한다',
 chk('침로대로 나아간다 — 속도에서 침로를 거꾸로 뽑지 않는다',
     /ship\.vx = Math\.cos\(ship\.head\)\*ship\.speed/.test(src) &&
     !/ship\.head = Math\.atan2\(ship\.vy,ship\.vx\)/.test(src));
-chk('강제 속력은 계산을 끊고 결과만 덮는다 — 표시값은 살아 있다',
-    /if\(P\.shipForce > 0\) ship\.speed = P\.shipForce \/ PX_TO_KN/.test(src));
+chk('강제 속력은 최고속만 갈아 끼운다 — 돛 단수도 표시값도 살아 있다',
+    /const forced = P\.shipForce > 0/.test(src) &&
+    !/if\(P\.shipForce > 0\) ship\.speed =/.test(src));
 
 // ── 원본 공식을 그대로 옮긴 시뮬레이션 ──────────────────────
 // 값은 1절에서 뽑은 것만 쓴다. 바람 효율(sailEff)은 1.0(순풍 만재)으로 두어

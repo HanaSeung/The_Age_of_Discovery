@@ -73,7 +73,7 @@ chk('배 x 이동에 gdt 적용', /let mdx = \(ship\.vx \+ curVec\.x\)\*gdt/.tes
 chk('배 y 이동에 gdt 적용', /let mdy = \(ship\.vy \+ curVec\.y\)\*gdt/.test(src));
 chk('변위를 해안 충돌에 넘긴다', /moveWithCoast\(ship\.x, ship\.y, mdx, mdy, MOVE\)/.test(src));
 chk('해류 파티클에도 적용', /const gdt = dt\*TIMEK\*P\.curGain/.test(src));
-chk('가속은 실시간 유지(dt)', /ship\.speed \+ ACC_UP\*dt/.test(src));
+chk('가속은 실시간 유지(dt)', /ship\.speed \+ ACC_UP\*accK\*dt/.test(src));
 chk('선회도 실시간 유지(dt)', /TURN_FULL \* rf \* dt/.test(src));
 chk('해류 배율 적용', /curVec\.x\*=P\.curGain/.test(src));
 // Shift 순풍은 바람 구현으로 폐기됨 — 물리에 남아 있으면 오히려 오류

@@ -31,7 +31,9 @@ chk('풍력 windPower()', /function windPower\(ms\)/.test(src));
 
 console.log('\n=== 2. Shift 순풍 제거 ===');
 chk('물리에서 boost 제거', !/keys\['shift'\]\?P\.boost:1/.test(src));
-chk('추진력이 sailEff 로 결정', /const target = SPEED \* \(ship\.sail\/SAIL_MAX\) \* sailEff/.test(src));
+chk('추진력이 sailEff 로 결정', /const target = topSpd \* \(ship\.sail\/SAIL_MAX\) \* topEff/.test(src) &&
+    /topSpd = forced \? P\.shipForce \/ PX_TO_KN : SPEED/.test(src) &&
+    /topEff = forced \? 1 : sailEff/.test(src));
 chk('안내문에서 Shift 삭제', !/Shift<\/kbd> 순풍/.test(src));
 chk('패널에서 순풍 슬라이더 삭제', !/'순풍\(Shift\)'/.test(src));
 

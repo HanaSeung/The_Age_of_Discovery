@@ -1175,12 +1175,14 @@ const P = {
   windGain  : 1.8,
   shipScale : 1.15,   // 선체 크기 (1.15 ≈ 33 화면px)
   curGain   : 1.0,    // 해류 배율 (1.0 = 실측 그대로)
-  // [테스트] 배의 속력을 바람·돛 계산에서 떼어 내 이 값으로 고정한다.
-  //   0 = 끔 (물리대로). 그 위면 그 속력(kn)으로 붙박는다.
+  // [테스트] 바람만 빼고 배를 미는 임시 추진력(kn). 0 = 끔 (물리대로).
+  //   0 보다 크면 이 값이 추진력(speedKn) 자리를 대신 차지하고, 바람이 정하는
+  //   몫(각도·풍속)만 1 로 굳는다. 그래서 돛 단수는 그대로 듣는다 — 4단 만점에
+  //   2단이면 이 값의 절반, 0단이면 멎는다. 덮어쓰지 않고 기준만 갈아 끼운다.
   // 해류는 그대로 살아 있다. 그래서 나침반 가운데 대지속력은 이 값과 다르게
   // 나온다 — 순류에선 크고 역류에선 작다. 그게 이 값의 쓸모다. 해류가 배를
   // 얼마나 밀어내는지를 다른 변수 없이 딱 보려고 만든 것이니까.
-  // 좌초는 그대로 걸린다. 다만 돛을 내려도 다음 프레임에 다시 밀고 나간다.
+  // 좌초도 그대로 걸린다.
   shipForce : 0
 };
 const P0 = Object.assign({}, P);   // 초기값 보존 — 되돌리기용
@@ -1418,18 +1420,25 @@ function update(dt){
   ship.windMs = windMs; ship.offWind = offWind; ship.sailEff = sailEff;
 
   // === 조타: A/D 회전, 속력은 돛 단수 × 바람 효율 ===
-  const target = SPEED * (ship.sail/SAIL_MAX) * sailEff;
+  // [테스트] 강제 속력 — 사슬을 끊는 것이 아니라 추진력을 갈아 끼운다.
+  // 켜져 있으면(>0) 최고속 자리를 그 값이 차지하고, 바람이 정하는 몫만 1 로
+  // 굳는다. 빠지는 것은 바람뿐이라 돛 단수(W/S)와 가감속은 그대로 산다.
+  // 바람 계산 자체는 위에서 끝까지 돌았으므로 계기의 풍속·역풍 부채꼴·바람
+  // 화살표는 실측대로 살아 있다. 해류는 아래에서 따로 더해진다.
+  const forced = P.shipForce > 0;
+  const topSpd = forced ? P.shipForce / PX_TO_KN : SPEED;   // 지금의 최고속
+  const topEff = forced ? 1 : sailEff;                      // 바람이 정하는 몫
+  // 가감속도 최고속에 맞춰 함께 늘린다. 그래야 가속 3.4초·감속 1.8초가 두
+  // 길에서 같은 뜻을 지킨다 — 기준만 바뀌고 걸리는 시간은 그대로다.
+  const accK = topSpd / SPEED;
+  const target = topSpd * (ship.sail/SAIL_MAX) * topEff;
   // 목표 속력으로 서서히 (가속은 느리고 감속은 빠르게)
-  if(ship.speed < target) ship.speed = Math.min(target, ship.speed + ACC_UP*dt);
-  else                    ship.speed = Math.max(target, ship.speed - ACC_DN*dt);
+  if(ship.speed < target) ship.speed = Math.min(target, ship.speed + ACC_UP*accK*dt);
+  else                    ship.speed = Math.max(target, ship.speed - ACC_DN*accK*dt);
   if(ship.speed < 0) ship.speed = 0;              // 후진 없음
-  // [테스트] 강제 속력 — 여기서 사슬을 끊는다.
-  // 바람·돛·가감속은 위에서 그대로 계산해 두었다 (ship.sailEff 등 표시값이
-  // 살아 있어야 하므로). 결과만 덮어쓴다. 해류는 아래에서 따로 더해지므로
-  // 손대지 않는다.
-  if(P.shipForce > 0) ship.speed = P.shipForce / PX_TO_KN;
-  // 선회: 속력이 빠를수록 잘 돌고, 정지에 가까우면 거의 안 돎
-  const rf = TURN_IDLE + (1-TURN_IDLE)*Math.min(1, ship.speed/SPEED);
+  // 선회: 속력이 빠를수록 잘 돌고, 정지에 가까우면 거의 안 돎.
+  // 기준은 그때의 최고속이다 — 강제 속력을 올렸다고 선회가 굼떠지지 않는다.
+  const rf = TURN_IDLE + (1-TURN_IDLE)*Math.min(1, ship.speed/topSpd);
   let turn = 0;
   if(keys['a']||keys['arrowleft'])  turn -= 1;
   if(keys['d']||keys['arrowright']) turn += 1;
@@ -3096,7 +3105,7 @@ const TUNE = (function(){
     // ─ 배: 표시·시험
     'shipScale' : '화면에 배를 얼마나 크게 그리는가. 항해에는 영향이 없다',
     'nightLamp' : '밤 표현 2(등불)에서 등불이 밝히는 거리',
-    'shipForce' : '바람을 무시하고 이 속력으로 민다. 0 이면 끈다 — 해류를 따로 보려는 시험 손잡이',
+    'shipForce' : '바람만 빼고 이 값을 최고속으로 삼는다. 돛 단수는 그대로 듣는다. 0 이면 끈다',
     // ─ 세계: 바람
     'windGain'  : '실측 풍속을 몇 배로 부풀려 쓰는가',
     'windMin'   : '이 세기 아래의 바람은 배를 밀지 못한다',
@@ -3611,7 +3620,7 @@ const TUNE = (function(){
       'starGain   : '+P.starGain+'      // 별 밝기\n'+
       'skySpan    : '+P.skySpan+'      // 하늘 크기 (1.0 = 하늘 전체가 화면 안에)\n'+
       'curGain    : '+P.curGain+'      // 해류 배율\n'+
-      'shipForce  : '+P.shipForce+'      // 강제 속력(kn) 0=끔\n'+
+      'shipForce  : '+P.shipForce+'      // 강제 속력 — 바람만 뺀 최고속(kn) 0=끔\n'+
       'shipScale  : '+P.shipScale+'      // 배 크기(그림)\n'+
       'zoom       : '+zoom.toFixed(2)+'      // 지도 배율\n';
     const btn = document.getElementById('tCopy');

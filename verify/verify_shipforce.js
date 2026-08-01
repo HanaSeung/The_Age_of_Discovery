@@ -1,10 +1,11 @@
 // verify_shipforce.js — 강제 속력이 물리를 제대로 가로채는가
 // 실행: node verify_shipforce.js
 //
-// 이 값은 바람·돛 사슬을 끊고 배의 속력을 직접 박는다. 확인해야 할 것은 셋이다.
-//   1. 정말 그 속력이 되는가 (단위 변환이 맞는가)
-//   2. 0 이면 물리가 그대로 살아 있는가
-//   3. 해류는 죽지 않았는가 — 이게 이 값을 만든 이유다
+// 이 값은 바람만 빼고 배의 최고속을 임시로 갈아 끼운다. 확인할 것은 넷이다.
+//   1. 돛을 다 펴면 정말 그 속력이 되는가 (단위 변환이 맞는가)
+//   2. 돛 단수(W/S)가 그대로 듣는가 — 2026.08 에 고친 자리다
+//   3. 0 이면 물리가 그대로 살아 있는가
+//   4. 해류는 죽지 않았는가 — 이게 이 값을 만든 이유다
 "use strict";
 const RELOC_ROOT = require('path').join(__dirname, '..'); // 프로젝트 루트
 const fs = require('fs'), path = require('path'), vm = require('vm');
@@ -20,13 +21,21 @@ console.log('\n=== 1. 코드 구조 ===');
 chk('P 에 shipForce 가 있다', /shipForce\s*:\s*0/.test(html));
 chk('패널에 강제 속력 항목이 있다', /\['shipForce',/.test(html));
 chk('값 복사에 들어간다', /shipForce\s*:\s*'\+P\.shipForce/.test(html));
-// 가로채는 자리가 맞는지 — 가감속 뒤, 침로 반영 앞이어야 한다
-const iAcc = html.indexOf('ship.speed < 0) ship.speed = 0');
-const iForce = html.indexOf('if(P.shipForce > 0) ship.speed');
-const iVx = html.indexOf('ship.vx = Math.cos(ship.head)*ship.speed');
-chk('가감속 뒤, 침로 반영 앞에서 가로챈다',
-    iAcc > 0 && iForce > iAcc && iVx > iForce,
-    '이 순서가 아니면 물리가 덮어쓰거나 속도가 안 실린다');
+// 덮어쓰기가 아니라 기준값이어야 한다. 옛 방식(다 계산한 뒤 결과를 덮어쓰기)이
+// 남아 있으면 W/S 가 다시 죽으므로, 그 줄이 사라졌는지부터 본다.
+chk('다 계산한 속력을 덮어쓰지 않는다',
+    !/if\(P\.shipForce\s*>\s*0\)\s*ship\.speed\s*=/.test(html),
+    '옛 사슬 끊기의 흔적이 없다');
+chk('최고속 자리를 대신 차지한다',
+    /P\.shipForce\s*\/\s*PX_TO_KN/.test(html) && /topSpd/.test(html));
+chk('목표 속력이 돛 단수를 곱한다',
+    /const\s+target\s*=\s*topSpd\s*\*\s*\(ship\.sail\/SAIL_MAX\)/.test(html),
+    'W/S 가 그대로 듣는 근거');
+chk('바람이 정하는 몫만 1 로 굳는다',
+    /topEff\s*=\s*forced\s*\?\s*1\s*:\s*sailEff/.test(html));
+chk('가감속도 최고속을 따라 늘어난다',
+    /accK\s*=\s*topSpd\s*\/\s*SPEED/.test(html),
+    '가속 N초가 두 길에서 같은 뜻을 지킨다');
 chk('해류를 건드리지 않는다',
     !/shipForce[\s\S]{0,200}curVec/.test(html), '해류는 따로 더해진다');
 
@@ -82,19 +91,24 @@ chk('본문이 오류 없이 실행된다', !bootErr,
 if(bootErr){ console.log('\n실패 있음\n'); process.exit(1); }
 const PX_TO_KN = vm.runInContext('PX_TO_KN', sb);
 
-// 배를 어느 지점에 놓고 update 를 한 번 돌린다. 돌리기 전후 위치 차이로
-// 실제 이동을 재면, 코드가 무엇을 더했는지 밖에서 확인할 수 있다.
+// 배를 어느 지점에 놓고 update 를 여러 번 돌린다. 속력이 한 번에 박히지 않고
+// 가감속 곡선을 타므로, 목표에 붙을 때까지 돌린 뒤 잰다. 자리는 매 프레임
+// 되돌려 고정한다 — 속력만 볼 것이라 배가 흘러가면 바람·해류가 달라져 흔들린다.
+// 마지막 한 프레임만 자리를 풀어 실제 이동(moved)을 잰다.
 function run(lon, lat, force, opt){
   opt = opt || {};
   return vm.runInContext(`(function(){
     const p = project(${lon}, ${lat});
     ship.x = p[0]; ship.y = p[1];
     ship.head = ${opt.head === undefined ? 0 : opt.head};
-    ship.speed = 0; ship.sail = ${opt.sail === undefined ? 2 : opt.sail};
+    ship.speed = 0; ship.sail = ${opt.sail === undefined ? 'SAIL_MAX' : opt.sail};
     ship.grounded = false;
     gameDay = ${opt.day === undefined ? 100 : opt.day};
     P.shipForce = ${force};
     P.curGain = ${opt.curGain === undefined ? 1 : opt.curGain};
+    const n = ${opt.frames === undefined ? 200 : opt.frames};
+    for(let i=0;i<n;i++){ update(${opt.dt === undefined ? 0.05 : opt.dt});
+                          ship.x = p[0]; ship.y = p[1]; }
     const x0 = ship.x, y0 = ship.y;
     update(${opt.dt === undefined ? 0.05 : opt.dt});
     return { kn: ship.speed*${PX_TO_KN},
@@ -107,22 +121,37 @@ function run(lon, lat, force, opt){
 }
 
 
-console.log('\n=== 3. 정말 그 속력이 되는가 ===');
-// 대서양 한복판. 가속 곡선을 건너뛰고 한 프레임 만에 그 값이 되어야 한다.
+console.log('\n=== 3. 돛을 다 펴면 그 속력이 되는가 ===');
+// 대서양 한복판. 가속 곡선을 타고 올라 그 값에 붙어야 한다.
 for(const kn of [0.5, 3, 8, 20]){
   const r = run(-30, 20, kn);
-  chk(`${kn} kn 으로 고정된다`, Math.abs(r.kn - kn) < 1e-6,
+  chk(`${kn} kn 에 붙는다`, Math.abs(r.kn - kn) < 1e-6,
       `실제 ${r.kn.toFixed(4)} kn`);
 }
-// 돛을 다 내려도, 바람이 없어도 나아간다 — 그게 이 값의 목적이다
-const noSail = run(-30, 20, 6, {sail:0});
-chk('돛을 내려도 그 속력이 나온다', Math.abs(noSail.kn - 6) < 1e-6,
-    `돛 0단인데 ${noSail.kn.toFixed(2)} kn`);
-chk('그래도 바람 계산은 살아 있다', noSail.wind > 0,
-    `풍속 ${noSail.wind.toFixed(2)} m/s — 나침반 표시가 죽지 않는다`);
+chk('바람 계산은 그대로 살아 있다', run(-30, 20, 6).wind > 0,
+    '나침반의 풍속·역풍 부채꼴·바람 화살표가 죽지 않는다');
+
+console.log('\n=== 3-2. 돛 단수(W/S)가 그대로 듣는가 ===');
+// 이것이 이번 개정의 요점이다. 옛 방식은 여기서 모두 같은 값이 나왔다.
+{
+  const FORCE = 8, MAX = vm.runInContext('SAIL_MAX', sb);
+  const kn = [];
+  for(let s=0; s<=MAX; s++) kn.push(run(-30, 20, FORCE, {sail:s}).kn);
+  chk('돛을 다 내리면 멎는다', kn[0] < 1e-9,
+      `0단에서 ${kn[0].toFixed(4)} kn`);
+  chk('돛이 만점이면 그 속력 그대로', Math.abs(kn[MAX] - FORCE) < 1e-6,
+      `${MAX}단에서 ${kn[MAX].toFixed(4)} kn`);
+  let mono = true;
+  for(let s=1; s<=MAX; s++) if(!(kn[s] > kn[s-1])) mono = false;
+  chk('단을 올릴수록 빨라진다', mono,
+      kn.map((x,i)=>i+'단 '+x.toFixed(2)).join(' · '));
+  const half = Math.round(MAX/2);
+  chk('단수에 정비례한다', Math.abs(kn[half] - FORCE*half/MAX) < 1e-6,
+      `${half}단 ${kn[half].toFixed(3)} kn (기댓값 ${(FORCE*half/MAX).toFixed(3)})`);
+}
 
 console.log('\n=== 4. 0 이면 물리가 그대로인가 ===');
-const off = run(-30, 20, 0, {sail:2, dt:0.05});
+const off = run(-30, 20, 0, {sail:2, dt:0.05, frames:0});
 chk('한 프레임에 최고속으로 튀지 않는다', off.kn < 3,
     `${off.kn.toFixed(3)} kn — 가속 곡선을 탄다`);
 // 여러 프레임 돌리면 서서히 붙는다. 다만 뱃머리를 아무 데나 두면 안 된다 —
@@ -203,7 +232,7 @@ console.log('\n=== 6. 다른 것들이 망가지지 않았는가 ===');
   const hit = vm.runInContext(`(function(){
     const p = project(-25, 20);              // 대서양, 아프리카 서안 앞바다
     ship.x=p[0]; ship.y=p[1]; ship.head=0;   // 정동진 — 육지로 곧장 몰아붙인다
-    ship.speed=0; ship.sail=2; ship.grounded=false;
+    ship.speed=0; ship.sail=SAIL_MAX; ship.grounded=false;
     P.shipForce=25; P.curGain=0; gameDay=100;
     const o={d:0,tx:0,ty:0};
     let worst = Infinity;                    // 600프레임 동안의 최소 여유
